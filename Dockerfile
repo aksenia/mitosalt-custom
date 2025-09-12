@@ -70,8 +70,8 @@ RUN sed -i 's#delplot\.R#/opt/MitoSAlt_1.1.1/delplot.R#g'  MitoSAlt1.1.1.pl
 
 
 # Copy the genome download and config script
-COPY config_human.txt download_genomes.sh delplot.py /opt/MitoSAlt_1.1.1/
-RUN chmod +x download_genomes.sh delplot.py
+COPY config_human.txt download_genomes.sh mitosalt_visualizer.py /opt/MitoSAlt_1.1.1/
+RUN chmod +x download_genomes.sh mitosalt_visualizer.py
 
 RUN echo '#!/usr/bin/expect -f\n\
 set timeout -1\n\
