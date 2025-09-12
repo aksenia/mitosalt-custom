@@ -4,12 +4,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Install system dependencies and tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-17-jre wget unzip ca-certificates \
-    python3 python3-pip python-is-python3 \
+    python3 python3-pip python-is-python3 python3-venv \
     perl r-base r-cran-plotrix r-cran-rcolorbrewer \
     hisat2 last-align samtools make gcc g++ zlib1g-dev \
     libbz2-dev liblzma-dev expect \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Setup virtual environment and install python packages
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN pip install --no-cache-dir pandas numpy matplotlib biopython
 
 # Install bedtools manually (latest stable release)
 ENV BEDTOOLS_VERSION=2.31.1
@@ -58,16 +63,15 @@ WORKDIR /opt/MitoSAlt_1.1.1
 
 # Correct the paths in the analysis and plotting R script to work with container
 RUN sed -i \
-    -e 's|plotfile<-paste("plot/",filename,".pdf",sep="")|plotfile<-paste("/tmp/plot/",filename,".pdf",sep="")|' \
-    -e 's|textfile<-paste("indel/",filename,".tsv",sep="")|textfile<-paste("/tmp/indel/",filename,".tsv",sep="")|' \
+    -e 's|plotfile<-paste("plot/",filename,".pdf",sep="")|plotfile<-paste("/output/plot/",filename,".pdf",sep="")|' \
+    -e 's|textfile<-paste("indel/",filename,".tsv",sep="")|textfile<-paste("/output/indel/",filename,".tsv",sep="")|' \
     /opt/MitoSAlt_1.1.1/delplot.R
+RUN sed -i 's#delplot\.R#/opt/MitoSAlt_1.1.1/delplot.R#g'  MitoSAlt1.1.1.pl
 
-# Create directory structure that MitoSAlt expects
-RUN mkdir -p bam bin bw genome indel log plot tab
 
 # Copy the genome download and config script
-COPY config_human.txt download_genomes.sh /opt/MitoSAlt_1.1.1/
-RUN chmod +x download_genomes.sh
+COPY config_human.txt download_genomes.sh delplot.py /opt/MitoSAlt_1.1.1/
+RUN chmod +x download_genomes.sh delplot.py
 
 RUN echo '#!/usr/bin/expect -f\n\
 set timeout -1\n\
@@ -94,6 +98,8 @@ RUN ./mitosalt_setup.exp
 
 # Add MitoSAlt and tools to PATH
 ENV PATH="/opt/MitoSAlt_1.1.1:/opt/bbmap:/usr/local/bin:/bin:${PATH}"
+ENV PATH="/opt/venv/bin:${PATH}"
+
 
 WORKDIR /data
 CMD ["/bin/bash"]
