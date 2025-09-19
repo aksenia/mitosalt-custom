@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-MitoSAlt Circular Plot Generator - enhanced rewrite of 
+MitoSAlt Circular Plot Generator - enhanced rewrite with spatial grouping analysis
 """
 
 import pandas as pd
 import numpy as np
+import re
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.colors import LinearSegmentedColormap
@@ -30,7 +31,7 @@ class MitoPlotter:
         self.dup_cmap = LinearSegmentedColormap.from_list(
             'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
     
-    def load_data(self, cluster_file, breakpoint_file, blacklist_file=None):
+    def load_data(self, cluster_file, breakpoint_file):
         """Load and process cluster and breakpoint data following R script exactly"""
         
         # Check if cluster file is empty
@@ -158,40 +159,11 @@ class MitoPlotter:
             print("No events above heteroplasmy threshold")
             return pd.DataFrame()
         
-        # Apply blacklist filter if provided
-        if blacklist_file and Path(blacklist_file).exists():
-            try:
-                blacklist = pd.read_csv(blacklist_file, sep='\t', header=None)
-                if len(blacklist.columns) >= 3:
-                    blacklist = blacklist.iloc[:, :3]
-                    blacklist.columns = ['chr', 'start', 'end']
-                    final_clusters = self._filter_blacklist(final_clusters, blacklist)
-                    print(f"Applied blacklist filter")
-            except Exception as e:
-                print(f"Warning: Could not load blacklist file: {e}")
-        
         # Classification: Start with all as deletions, then apply R script logic
         final_clusters['final.event'] = 'del'
         final_clusters = self._apply_origin_classification(final_clusters)
         
         return final_clusters
-    
-    def _filter_blacklist(self, clusters, blacklist):
-        """Filter out events that overlap with blacklisted regions"""
-        def overlaps_blacklist(row):
-            start, end = row['del.start.median'], row['del.end.median']
-            for _, region in blacklist.iterrows():
-                bl_start, bl_end = region['start'], region['end']
-                if not (end < bl_start or start > bl_end):
-                    return True
-            return False
-        
-        mask = ~clusters.apply(overlaps_blacklist, axis=1)
-        filtered_count = len(clusters) - mask.sum()
-        if filtered_count > 0:
-            print(f"Filtered out {filtered_count} events overlapping blacklisted regions")
-        
-        return clusters[mask]
     
     def _apply_origin_classification(self, clusters):
         """
@@ -266,7 +238,264 @@ class MitoPlotter:
         
         return clusters
 
-    def _classify_event_pattern(self, events, blacklist_file=None):
+    def _perform_spatial_grouping(self, events_df, radius=1000, high_het_threshold=0.30, sig_het_threshold=0.05, min_group_size=2):  # Increased radius
+        """
+        Perform spatial grouping of events within radius distance, separating by event type
+        Returns grouping results with group IDs assigned to events
+        """
+        if len(events_df) == 0:
+            return self._empty_grouping_result(events_df)
+
+        # Separate by event type first to avoid mixed groups
+        del_events = events_df[events_df['final.event'] == 'del'].copy()
+        dup_events = events_df[events_df['final.event'] == 'dup'].copy()
+        
+        # Group each type separately
+        del_groups = self._group_events_by_type(del_events, radius, 'del') if len(del_events) > 0 else []
+        dup_groups = self._group_events_by_type(dup_events, radius, 'dup') if len(dup_events) > 0 else []
+        
+        # Combine and assign global group IDs
+        all_groups = del_groups + dup_groups
+        
+        # Sort by median size (largest first) for outside-to-inside plotting
+        all_groups.sort(key=lambda x: x['median_size'], reverse=True)
+
+        for i, group in enumerate(all_groups):
+            group['id'] = i
+            group['group_id'] = f'G{i+1}'
+    
+        return self._build_grouping_results(all_groups, events_df, significant_groups=all_groups, 
+                                        high_het_groups=[g for g in all_groups if g['high_het_count'] > 0],
+                                        high_het_threshold=high_het_threshold, sig_het_threshold=sig_het_threshold)
+
+    def _circular_distance(self, pos1, pos2):
+        """Calculate minimum distance on circular genome"""
+        direct = abs(pos1 - pos2)
+        wraparound = self.genome_length - direct
+        return min(direct, wraparound)
+
+    def _events_are_close(self, event1, event2, radius):
+        """Check if two events are within grouping radius using circular distance"""
+        # Check multiple distance metrics
+        start_dist = self._circular_distance(event1['start'], event2['start'])
+        end_dist = self._circular_distance(event1['end'], event2['end'])
+        center_dist = self._circular_distance(event1['center'], event2['center'])
+        
+        # Events are close if any breakpoint is within radius
+        return min(start_dist, end_dist, center_dist) <= radius
+
+    def _event_to_dict(self, event_row, idx):
+        """Convert event row to dictionary format for grouping"""
+        return {
+            'idx': idx,
+            'start': event_row['del.start.median'],
+            'end': event_row['del.end.median'],
+            'center': (event_row['del.start.median'] + event_row['del.end.median']) / 2,
+            'heteroplasmy': event_row['perc'],
+            'event_type': event_row['final.event'],
+            'size': event_row['delsize']
+        }
+
+    def _group_events_by_type(self, events, radius, event_type):
+        """Group events of same type using improved circular distance"""
+        if len(events) == 0:
+            return []
+        
+        groups = []
+        used_indices = set()
+        
+        # Sort by heteroplasmy (highest first) to prioritize dominant events
+        events_sorted = events.sort_values('perc', ascending=False).reset_index()
+        
+        for idx, (_, event) in enumerate(events_sorted.iterrows()):
+            orig_idx = event['index']  # Original index before sorting
+            if orig_idx in used_indices:
+                continue
+                
+            # Start new group with this event
+            group = [self._event_to_dict(event, orig_idx)]
+            used_indices.add(orig_idx)
+            
+            # Find events close to this seed event (single-linkage clustering)
+            for jdx, (_, other_event) in enumerate(events_sorted.iterrows()):
+                orig_jdx = other_event['index']
+                if orig_jdx in used_indices:
+                    continue
+                    
+                other_dict = self._event_to_dict(other_event, orig_jdx)
+                
+                # Check if close to the seed event (not all members - allows elongated groups)
+                if self._events_are_close(group[0], other_dict, radius):
+                    group.append(other_dict)
+                    used_indices.add(orig_jdx)
+            
+            # Create group info
+            if len(group) >= 1:  # Keep all groups including single events
+                groups.append(self._build_group_info(group, event_type))
+        
+        return groups
+
+    def _build_group_info(self, group, event_type):
+        """Build group information dictionary"""
+        # Thresholds as same in classify events 
+        HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
+        LOW_HETEROPLASMY_THRESHOLD = 1.0    # 1% - potential artifacts/minor events
+        SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
+
+        heteroplasmy_values = [e['heteroplasmy'] for e in group]
+        sizes = [e['end'] - e['start'] for e in group]  # Use actual genomic spans
+        positions = []
+        for e in group:
+            positions.extend([e['start'], e['end']])
+        
+        group_info = {
+            'id': 0,  # Will be assigned later
+            'group_id': 'G1',  # Will be assigned later
+            'event_count': len(group),
+            'event_type': event_type,
+            'max_heteroplasmy': max(heteroplasmy_values),
+            'mean_heteroplasmy': np.mean(heteroplasmy_values),
+            'total_heteroplasmy': sum(heteroplasmy_values),
+            'median_size': np.median(sizes),  
+            'max_size': max(sizes),          
+            'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
+            'high_het_count': sum(1 for h in heteroplasmy_values if h >=  HIGH_HETEROPLASMY_THRESHOLD),
+            'significant_count': sum(1 for h in heteroplasmy_values if h >= SIGNIFICANT_HETEROPLASMY_THRESHOLD),
+            'events': group
+        }
+        
+        # Calculate dominance score (heteroplasmy × event count)
+        group_info['dominance_score'] = group_info['max_heteroplasmy'] * group_info['event_count']
+        
+        # Find representative event (highest heteroplasmy)
+        representative = max(group, key=lambda x: x['heteroplasmy'])
+        group_info['representative'] = {
+            'heteroplasmy': representative['heteroplasmy'],
+            'event_type': representative['event_type'],
+            'start': representative['start'],
+            'end': representative['end'],
+            'size': representative['size']
+        }
+        
+        return group_info
+
+    def _build_grouping_results(self, all_groups, events_df, significant_groups, high_het_groups, high_het_threshold, sig_het_threshold):
+        """Build final grouping results"""
+        dominant_group = all_groups[0] if all_groups else None
+        dominant_group_events = dominant_group['event_count'] if dominant_group else 0
+        dominant_group_range = dominant_group['spatial_range'] if dominant_group else 0
+        
+        # Count outlier events (events not in significant groups)
+        events_in_significant_groups = sum(g['event_count'] for g in significant_groups)
+        outlier_events = len(events_df) - events_in_significant_groups
+        
+        # Assign group IDs to events dataframe
+        events_with_groups = events_df.copy()
+        events_with_groups['group'] = 'G1'  # Default for single events
+        
+        if len(all_groups) > 0:
+            # Create mapping from event index to group ID
+            idx_to_group = {}
+            for group_info in all_groups:
+                for event in group_info['events']:
+                    idx_to_group[event['idx']] = group_info['group_id']
+            
+            # Assign group IDs to events
+            for idx, row in events_with_groups.iterrows():
+                if idx in idx_to_group:
+                    events_with_groups.loc[idx, 'group'] = idx_to_group[idx]
+        
+        return {
+            'group_analysis': all_groups,
+            'significant_groups': significant_groups,
+            'high_het_groups': high_het_groups,
+            'dominant_group': dominant_group,
+            'dominant_group_events': dominant_group_events,
+            'dominant_group_range': dominant_group_range,
+            'outlier_events': outlier_events,
+            'events_with_groups': events_with_groups
+        }
+
+    def _empty_grouping_result(self, events_df):
+        """Return empty grouping result"""
+        return {
+            'group_analysis': [],
+            'significant_groups': [],
+            'high_het_groups': [],
+            'dominant_group': None,
+            'dominant_group_events': 0,
+            'dominant_group_range': 0,
+            'outlier_events': 0,
+            'events_with_groups': events_df.copy()
+        }
+    
+    def _load_blacklist_regions(self, blacklist_file):
+        """Robustly load blacklist regions from file, returns list of dicts"""
+        blacklist_regions = []
+        if blacklist_file and Path(blacklist_file).exists():
+            try:
+                blacklist = None
+                for sep in ['\t', None, ' ', '\\s+']:
+                    try:
+                        if sep == '\\s+':
+                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
+                        elif sep is None:
+                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
+                        else:
+                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None)
+                        if blacklist.shape[1] >= 3:
+                            break
+                        else:
+                            blacklist = None
+                    except Exception:
+                        continue
+                if blacklist is None or blacklist.shape[1] < 3:
+                    with open(blacklist_file, 'r') as f:
+                        lines = f.readlines()
+                    parsed_lines = []
+                    for line in lines:
+                        line = line.strip()
+                        if line:
+                            parts = line.split()
+                            if len(parts) >= 3:
+                                parsed_lines.append([parts[0], parts[1], parts[2]])
+                    if parsed_lines:
+                        blacklist = pd.DataFrame(parsed_lines, columns=['chr', 'start', 'end'])
+                if blacklist is not None:
+                    blacklist = blacklist.iloc[:, :3].copy()
+                    blacklist.columns = ['chr', 'start', 'end']
+                    blacklist['start'] = pd.to_numeric(blacklist['start'], errors='coerce')
+                    blacklist['end'] = pd.to_numeric(blacklist['end'], errors='coerce')
+                    blacklist = blacklist.dropna()
+                    blacklist_regions = blacklist.to_dict('records')
+            except Exception as e:
+                print(f"Warning: Could not load blacklist file: {e}")
+        return blacklist_regions
+    
+    def _crosses_blacklist(self, start_pos, end_pos, blacklist_regions):
+        """Check if event breakpoints cross any blacklisted regions"""
+        if not blacklist_regions:
+            return False
+        
+        for region in blacklist_regions:
+            bl_start, bl_end = int(region['start']), int(region['end'])
+            if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
+                return True
+        return False
+    
+    def _filter_blacklist(self, clusters, blacklist_regions):
+        """Filter out events that overlap with blacklisted regions"""
+        mask = ~clusters.apply(
+            lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
+            axis=1
+        )
+        filtered_count = len(clusters) - mask.sum()
+        if filtered_count > 0:
+            print(f"Filtered out {filtered_count} events overlapping blacklisted regions")
+        return clusters[mask]
+
+
+    def _classify_event_pattern(self, events, blacklist_regions=None):
         """
         Classify events as Single or Multiple based on MitoSAlt literature criteria:
         - Single: Dominated by one or few high-heteroplasmy events (typically >30-35%)
@@ -275,49 +504,35 @@ class MitoPlotter:
         Note: Excludes blacklist-crossing events from classification as these are likely artifacts
         """
         if len(events) == 0:
-            return "Unknown", "No events detected", {}
+            return "Unknown", "No events detected", {}, pd.DataFrame()
         
         # Filter out blacklist-crossing events for classification
-        if blacklist_file:
-            try:
-                blacklist_regions = self._load_blacklist_regions(blacklist_file)
-                if blacklist_regions:
-                    def crosses_blacklist(start_pos, end_pos):
-                        for region in blacklist_regions:
-                            bl_start, bl_end = int(region['start']), int(region['end'])
-                            if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
-                                return True
-                        return False
-                    
-                    # Filter to non-blacklist events for classification
-                    clean_events = events[~events.apply(lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median']), axis=1)]
-                    
-                    if len(clean_events) == 0:
-                        return "Unknown", "All events cross blacklisted regions", {}
-                        
-                    # Use clean events for classification
-                    events_for_classification = clean_events
-                    blacklist_filtered_count = len(events) - len(clean_events)
-                else:
-                    events_for_classification = events
-                    blacklist_filtered_count = 0
-            except Exception as e:
-                print(f"Warning: Could not apply blacklist filter: {e}")
-                events_for_classification = events
-                blacklist_filtered_count = 0
+        if blacklist_regions:
+            print(f"DEBUG: Classification - checking {len(events)} events against {len(blacklist_regions)} blacklist regions")
+
+            # Filter to non-blacklist events for classification
+            clean_events = events[~events.apply(lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)]
+
+            if len(clean_events) == 0:
+                return "Unknown", "All events cross blacklisted regions", {}, events.copy()
+            
+            # Use clean events for classification
+            events_for_classification = clean_events
+            blacklist_filtered_count = len(events) - len(clean_events)
         else:
+            # No blacklist regions provided
             events_for_classification = events
             blacklist_filtered_count = 0
         
         # Key biological thresholds based on literature
-        HIGH_HETEROPLASMY_THRESHOLD = 0.30  # 30% - major pathogenic events
-        LOW_HETEROPLASMY_THRESHOLD = 0.01   # 1% - potential artifacts/minor events
-        SIGNIFICANT_HETEROPLASMY_THRESHOLD = 0.05  # 5% - only count events above this for type classification
+        HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
+        LOW_HETEROPLASMY_THRESHOLD = 1.0   # 1% - potential artifacts/minor events
+        SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
         MAJOR_EVENT_COUNT_THRESHOLD = 3     # Few major events = single pattern
         TOTAL_EVENT_COUNT_THRESHOLD = 20    # Many events = multiple pattern
         
         # Clustering parameters
-        CLUSTER_RADIUS = 300  # bp - events within 300bp form a cluster
+        CLUSTER_RADIUS = 400  # bp - events within 400bp form a cluster
         MIN_CLUSTER_SIZE = 2  # minimum events to be considered a significant cluster
         
         # Heteroplasmy-based classification (using clean events only)
@@ -344,107 +559,17 @@ class MitoPlotter:
         high_het_del_count = high_het_dels.sum()
         high_het_dup_count = high_het_dups.sum()
         
-        # IMPLEMENT PROPER CLUSTERING ALGORITHM
-        def cluster_events(events_df, radius=CLUSTER_RADIUS):
-            """Group events within radius into clusters"""
-            if len(events_df) == 0:
-                return []
-            
-            events_list = []
-            for idx, event in events_df.iterrows():
-                events_list.append({
-                    'idx': idx,
-                    'start': event['del.start.median'],
-                    'end': event['del.end.median'],
-                    'center': (event['del.start.median'] + event['del.end.median']) / 2,
-                    'heteroplasmy': event['perc'],
-                    'event_type': event['final.event'],
-                    'size': event['delsize']
-                })
-            
-            clusters = []
-            used_events = set()
-            
-            for i, event in enumerate(events_list):
-                if i in used_events:
-                    continue
-                    
-                # Start new cluster with this event
-                cluster = [event]
-                used_events.add(i)
-                
-                # Find all events within radius of this cluster
-                for j, other_event in enumerate(events_list):
-                    if j in used_events:
-                        continue
-                        
-                    # Check if other_event is within radius of any event in cluster
-                    min_distance = float('inf')
-                    for cluster_event in cluster:
-                        # Calculate distance between breakpoint regions
-                        dist1 = abs(other_event['start'] - cluster_event['start'])
-                        dist2 = abs(other_event['end'] - cluster_event['end'])
-                        dist3 = abs(other_event['center'] - cluster_event['center'])
-                        min_distance = min(min_distance, dist1, dist2, dist3)
-                    
-                    if min_distance <= radius:
-                        cluster.append(other_event)
-                        used_events.add(j)
-                
-                clusters.append(cluster)
-            
-            return clusters
+        # Perform spatial grouping analysis (separate from classification)
+        grouping_results = self._perform_spatial_grouping(events_for_classification, CLUSTER_RADIUS, HIGH_HETEROPLASMY_THRESHOLD, SIGNIFICANT_HETEROPLASMY_THRESHOLD, MIN_CLUSTER_SIZE)
         
-        # Perform clustering analysis
-        clusters = cluster_events(events_for_classification, CLUSTER_RADIUS)
-        
-        # Analyze clusters
-        cluster_analysis = []
-        for i, cluster in enumerate(clusters):
-            if len(cluster) == 0:
-                continue
-                
-            heteroplasmy_values = [e['heteroplasmy'] for e in cluster]
-            positions = []
-            for e in cluster:
-                positions.extend([e['start'], e['end']])
-            
-            cluster_info = {
-                'id': i,
-                'event_count': len(cluster),
-                'max_heteroplasmy': max(heteroplasmy_values),
-                'mean_heteroplasmy': np.mean(heteroplasmy_values),
-                'total_heteroplasmy': sum(heteroplasmy_values),
-                'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
-                'high_het_count': sum(1 for h in heteroplasmy_values if h >= HIGH_HETEROPLASMY_THRESHOLD),
-                'significant_count': sum(1 for h in heteroplasmy_values if h >= SIGNIFICANT_HETEROPLASMY_THRESHOLD),
-                'del_count': sum(1 for e in cluster if e['event_type'] == 'del'),
-                'dup_count': sum(1 for e in cluster if e['event_type'] == 'dup'),
-                'events': cluster
-            }
-            
-            # Calculate cluster score (heteroplasmy × event count for dominance)
-            cluster_info['dominance_score'] = cluster_info['max_heteroplasmy'] * cluster_info['event_count']
-            
-            cluster_analysis.append(cluster_info)
-        
-        # Identify significant clusters and dominant cluster
-        significant_clusters = [c for c in cluster_analysis if c['event_count'] >= MIN_CLUSTER_SIZE or c['max_heteroplasmy'] >= HIGH_HETEROPLASMY_THRESHOLD]
-        high_het_clusters = [c for c in cluster_analysis if c['high_het_count'] > 0]
-        
-        # Find dominant cluster (highest dominance score)
-        if cluster_analysis:
-            dominant_cluster = max(cluster_analysis, key=lambda x: x['dominance_score'])
-            dominant_cluster_events = dominant_cluster['event_count']
-            dominant_cluster_range = dominant_cluster['spatial_range']
-        else:
-            dominant_cluster = None
-            dominant_cluster_events = 0
-            dominant_cluster_range = 0
-        
-        # Count outlier events (events not in significant clusters)
-        events_in_significant_clusters = sum(c['event_count'] for c in significant_clusters)
-        outlier_events = len(events_for_classification) - events_in_significant_clusters
+        # Extract grouping metrics for classification
+        group_analysis = grouping_results['group_analysis']
+        significant_groups = grouping_results['significant_groups']
+        high_het_groups = grouping_results['high_het_groups']
+        dominant_group = grouping_results['dominant_group']
+        dominant_group_events = grouping_results['dominant_group_events']
+        dominant_group_range = grouping_results['dominant_group_range']
+        outlier_events = grouping_results['outlier_events']
         
         # Spatial metrics - enhanced with clustering analysis
         positions = []
@@ -525,9 +650,14 @@ class MitoPlotter:
                 'subtype': "Artifacts/noise only" if len(events_for_classification) > 0 else "No events detected"
             }
             
-            return classification, reason_str, criteria
+            # For no-event cases, just return events as-is (no grouping needed)
+            events_with_groups = events_for_classification.copy() if len(events_for_classification) > 0 else events.copy()
+            if len(events_with_groups) > 0 and 'group' not in events_with_groups.columns:
+                events_with_groups['group'] = 'G1'  # Default group for any remaining events
+            
+            return classification, reason_str, criteria, events_with_groups
 
-        # Decision logic enhanced with proper clustering analysis
+        # Decision logic enhanced with proper spatial grouping analysis
         # SINGLE EVENT PATTERN criteria (ENHANCED)
         single_pattern_indicators = [
             # Criterion 1: Dominant high-heteroplasmy event(s)
@@ -548,14 +678,14 @@ class MitoPlotter:
             # Criterion 6: Dominant single type even with mixed low-het noise
             (significant_del_count >= 1 and significant_dup_count == 0) or (significant_dup_count >= 1 and significant_del_count == 0),
             
-            # ENHANCED: Dominant cluster with most events (≥70% in main cluster)
-            dominant_cluster_events >= 0.7 * len(events_for_classification) if dominant_cluster else False,
+            # ENHANCED: Dominant group with most events (≥70% in main group)
+            dominant_group_events >= 0.7 * len(events_for_classification) if dominant_group else False,
             
-            # ENHANCED: Single significant cluster dominates
-            len(significant_clusters) == 1 and significant_clusters[0]['high_het_count'] > 0 if significant_clusters else False,
+            # ENHANCED: Single significant group dominates
+            len(significant_groups) == 1 and significant_groups[0]['high_het_count'] > 0 if significant_groups else False,
             
-            # ENHANCED: Few outliers compared to dominant cluster
-            outlier_events <= dominant_cluster_events if dominant_cluster else False,
+            # ENHANCED: Few outliers compared to dominant group
+            outlier_events <= dominant_group_events if dominant_group else False,
             
             # Criterion 7: Tight spatial clustering + high heteroplasmy = single underlying event
             tight_clustering and len(high_het_events) >= 1,
@@ -587,17 +717,17 @@ class MitoPlotter:
             # Criterion 6: Multiple high-heteroplasmy events of different types
             high_het_del_count >= 2 and high_het_dup_count >= 2,
             
-            # ENHANCED: Multiple significant clusters (≥3)
-            len(significant_clusters) >= 3,
+            # ENHANCED: Multiple significant groups (≥3)
+            len(significant_groups) >= 3,
             
-            # ENHANCED: Multiple high-heteroplasmy clusters (≥2)
-            len(high_het_clusters) >= 2,
+            # ENHANCED: Multiple high-heteroplasmy groups (≥2)
+            len(high_het_groups) >= 2,
             
-            # ENHANCED: No dominant cluster (scattered pattern)
-            not dominant_cluster or dominant_cluster_events < 0.5 * len(events_for_classification),
+            # ENHANCED: No dominant group (scattered pattern)
+            not dominant_group or dominant_group_events < 0.5 * len(events_for_classification),
             
-            # ENHANCED: Many outliers vs clustered events
-            outlier_events > dominant_cluster_events if dominant_cluster else len(events_for_classification) > 10,
+            # ENHANCED: Many outliers vs grouped events
+            outlier_events > dominant_group_events if dominant_group else len(events_for_classification) > 10,
             
             # Criterion 7: Scattered spatial pattern suggests multiple independent events
             scattered_pattern and len(events_for_classification) > 5,
@@ -616,7 +746,7 @@ class MitoPlotter:
         if single_score > multiple_score:
             classification = "Single"
             
-            # Detailed reasoning for single pattern (with cluster-based analysis)
+            # Detailed reasoning for single pattern (with group-based analysis)
             reasons = []
             if len(high_het_events) >= 1:
                 reasons.append(f"dominant high-heteroplasmy event(s) ({len(high_het_events)} at ≥{HIGH_HETEROPLASMY_THRESHOLD:.0%})")
@@ -625,17 +755,17 @@ class MitoPlotter:
             if significant_del_count + significant_dup_count <= MAJOR_EVENT_COUNT_THRESHOLD:
                 reasons.append(f"few significant events ({significant_del_count} del, {significant_dup_count} dup ≥5%)")
             
-            # Add cluster-based spatial analysis
-            if dominant_cluster_events > 0:
-                cluster_percentage = (dominant_cluster_events / len(events_for_classification)) * 100
-                reasons.append(f"dominant cluster ({dominant_cluster_events}/{len(events_for_classification)} events, {cluster_percentage:.0f}%)")
+            # Add group-based spatial analysis
+            if dominant_group_events > 0:
+                group_percentage = (dominant_group_events / len(events_for_classification)) * 100
+                reasons.append(f"dominant group ({dominant_group_events}/{len(events_for_classification)} events, {group_percentage:.0f}%)")
                     
-                # Only report clustering range for multiple events
-                if dominant_cluster_events > 1:
-                    if dominant_cluster_range <= TIGHT_CLUSTER_THRESHOLD:
-                        reasons.append(f"tightly clustered (range: {dominant_cluster_range:.0f}bp)")
-                    elif dominant_cluster_range <= LOOSE_CLUSTER_THRESHOLD:
-                        reasons.append(f"loosely clustered (range: {dominant_cluster_range:.0f}bp)")
+                # Only report spatial range for multiple events
+                if dominant_group_events > 1:
+                    if dominant_group_range <= TIGHT_CLUSTER_THRESHOLD:
+                        reasons.append(f"tightly grouped (range: {dominant_group_range:.0f}bp)")
+                    elif dominant_group_range <= LOOSE_CLUSTER_THRESHOLD:
+                        reasons.append(f"loosely grouped (range: {dominant_group_range:.0f}bp)")
                         
                 if outlier_events > 0:
                     reasons.append(f"{outlier_events} outlier events (likely artifacts)")
@@ -648,12 +778,12 @@ class MitoPlotter:
             if len(low_het_events) > 0:
                 reasons.append(f"{len(low_het_events)} low-level events (<1%)")
             
-            reason_str = "; ".join(reasons) if reasons else f"clustered pattern ({len(events_for_classification)} events)"
+            reason_str = "; ".join(reasons) if reasons else f"grouped pattern ({len(events_for_classification)} events)"
             
         elif multiple_score > single_score:
             classification = "Multiple"
             
-            # Detailed reasoning for multiple pattern (with cluster-based analysis)
+            # Detailed reasoning for multiple pattern (with group-based analysis)
             reasons = []
             if len(events_for_classification) > TOTAL_EVENT_COUNT_THRESHOLD:
                 reasons.append(f"{len(events_for_classification)} events")
@@ -664,13 +794,13 @@ class MitoPlotter:
             if high_het_del_count >= 2 and high_het_dup_count >= 2:
                 reasons.append(f"multiple high-het types ({high_het_del_count} del, {high_het_dup_count} dup ≥30%)")
                     
-            # Add cluster-based spatial analysis
-            if len(significant_clusters) > 1:
-                reasons.append(f"{len(significant_clusters)} significant clusters")
-            if len(high_het_clusters) > 1:
-                reasons.append(f"{len(high_het_clusters)} high-heteroplasmy clusters")
-            if scattered_pattern and outlier_events > dominant_cluster_events:
-                reasons.append(f"scattered pattern (outliers > dominant cluster)")
+            # Add group-based spatial analysis
+            if len(significant_groups) > 1:
+                reasons.append(f"{len(significant_groups)} significant groups")
+            if len(high_het_groups) > 1:
+                reasons.append(f"{len(high_het_groups)} high-heteroplasmy groups")
+            if scattered_pattern and outlier_events > dominant_group_events:
+                reasons.append(f"scattered pattern (outliers > dominant group)")
             elif bp_range > LOOSE_CLUSTER_THRESHOLD:
                 reasons.append(f"wide distribution ({bp_range:.0f}bp span)")
                     
@@ -712,16 +842,16 @@ class MitoPlotter:
             'high_het_del_count': high_het_del_count,
             'high_het_dup_count': high_het_dup_count,
             
-            # Clustering analysis metrics (ENHANCED)
-            'total_clusters': len(cluster_analysis),
-            'significant_clusters': len(significant_clusters),
-            'high_het_clusters': len(high_het_clusters),
-            'dominant_cluster_events': dominant_cluster_events,
-            'dominant_cluster_range': dominant_cluster_range,
+            # Spatial grouping analysis metrics (ENHANCED)
+            'total_groups': len(group_analysis),
+            'significant_groups': len(significant_groups),
+            'high_het_groups': len(high_het_groups),
+            'dominant_group_events': dominant_group_events,
+            'dominant_group_range': dominant_group_range,
             'outlier_events': outlier_events,
-            'cluster_analysis': cluster_analysis,
+            'group_analysis': group_analysis,
             
-            # Spatial clustering metrics
+            # Spatial clustering metrics (legacy)
             'breakpoint_range': bp_range,
             'breakpoint_std': bp_std,
             'tight_clustering': tight_clustering,
@@ -760,8 +890,25 @@ class MitoPlotter:
             else:
                 criteria['subtype'] = "Multiple single-type events"
         
-        return classification, reason_str, criteria
+        # Return events with group assignments
+        events_with_groups = grouping_results['events_with_groups']
 
+        # NOW ADD BLACKLIST EVENTS BACK for visualization
+        if blacklist_regions:
+            # Find blacklist-crossing events
+            blacklist_events = events[events.apply(lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)].copy()
+            
+            if len(blacklist_events) > 0:
+                # Add blacklist flag and unique group info for each event
+                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
+                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}' 
+                blacklist_events['blacklist_crossing'] = True
+                
+                # Add back to events_with_groups
+                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+                print(f"DEBUG: Added {len(blacklist_events)} blacklist events back for plotting")
+
+        return classification, reason_str, criteria, events_with_groups
 
     def _align_breakpoints(self, starts, ends, genome_seq, flank_size=15):
         """Python implementation of R align.bp function"""
@@ -816,50 +963,24 @@ class MitoPlotter:
         
         return pd.DataFrame(results)
     
-    def _load_blacklist_regions(self, blacklist_file):
-        """Robustly load blacklist regions from file, returns list of dicts"""
-        blacklist_regions = []
-        if blacklist_file and Path(blacklist_file).exists():
-            try:
-                blacklist = None
-                for sep in ['\t', None, ' ', '\\s+']:
-                    try:
-                        if sep == '\\s+':
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
-                        elif sep is None:
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
-                        else:
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None)
-                        if blacklist.shape[1] >= 3:
-                            break
-                        else:
-                            blacklist = None
-                    except Exception:
-                        continue
-                if blacklist is None or blacklist.shape[1] < 3:
-                    with open(blacklist_file, 'r') as f:
-                        lines = f.readlines()
-                    parsed_lines = []
-                    for line in lines:
-                        line = line.strip()
-                        if line:
-                            parts = line.split()
-                            if len(parts) >= 3:
-                                parsed_lines.append([parts[0], parts[1], parts[2]])
-                    if parsed_lines:
-                        blacklist = pd.DataFrame(parsed_lines, columns=['chr', 'start', 'end'])
-                if blacklist is not None:
-                    blacklist = blacklist.iloc[:, :3].copy()
-                    blacklist.columns = ['chr', 'start', 'end']
-                    blacklist['start'] = pd.to_numeric(blacklist['start'], errors='coerce')
-                    blacklist['end'] = pd.to_numeric(blacklist['end'], errors='coerce')
-                    blacklist = blacklist.dropna()
-                    blacklist_regions = blacklist.to_dict('records')
-            except Exception as e:
-                print(f"Warning: Could not load blacklist file: {e}")
-        return blacklist_regions
+    def group_sort_key(self, group_id):
+        """Convert group ID to sortable tuple (priority, number)"""
+        match = re.match(r'^([A-Z]+)(\d+)$', group_id)
+        if match:
+            prefix, number = match.groups()
+            if prefix == 'G':
+                return (0, int(number))  # Regular groups first
+            elif prefix == 'BL':
+                return (1000, int(number))  # Blacklist groups after regular groups
+            else:
+                # Unexpected format - log warning and put at end
+                print(f"WARNING: Unexpected group ID format: {group_id}")
+                return (9999, int(number))
+        else:
+            print(f"WARNING: Could not parse group ID: {group_id}")
+            return (9999, 0)
     
-    def create_plot(self, events, output_file, figsize=(16, 10), blacklist_file=None):  # Wider figure
+    def create_plot(self, events, output_file, figsize=(16, 10), blacklist_regions=None):
         """Create circular plot of mitochondrial events"""
         if len(events) == 0:
             print("No events to plot")
@@ -867,12 +988,6 @@ class MitoPlotter:
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         
-        # Load blacklist regions if provided
-        try:
-            blacklist_regions = self._load_blacklist_regions(blacklist_file)
-        except Exception as e:
-            print(f"Warning: Could not load blacklist file: {e}")
-
         # Create data structure for plotting
         dat = pd.DataFrame({
             'chr': 'MT',
@@ -881,24 +996,20 @@ class MitoPlotter:
             'value': events['perc'],
             'dloop': events['dloop'],
             'delsize': events['delsize'],
-            'final.event': events['final.event']
+            'final.event': events['final.event'],
+            'group': events.get('group', 'G1')
         })
         
-        # Enhanced blacklist crossing detection
-        def crosses_blacklist(start_pos, end_pos):
-            if not blacklist_regions:
-                return False
-            for region in blacklist_regions:
-                bl_start, bl_end = int(region['start']), int(region['end'])
-                if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
-                    return True
-            return False
+        # Order events by group for better visualization
+        if 'group' in events.columns:
+            dat = dat.sort_values(['group', 'value'], ascending=[True, False]).reset_index(drop=True)
         
+        # Enhanced blacklist crossing detection      
         dat['blacklist_crossing'] = False
         if blacklist_regions:
             for idx, row in dat.iterrows():
-                dat.loc[idx, 'blacklist_crossing'] = crosses_blacklist(row['start'], row['end'])
-        
+                dat.loc[idx, 'blacklist_crossing'] = self._crosses_blacklist(row['start'], row['end'], blacklist_regions)
+
         # Count events
         del_count = (dat['final.event'] == 'del').sum()
         dup_count = (dat['final.event'] == 'dup').sum()
@@ -913,91 +1024,184 @@ class MitoPlotter:
         if dup_no_dloop_mask.any():
             dat.loc[dup_no_dloop_mask, 'deg1'] = 360 + dat.loc[dup_no_dloop_mask, 'deg1']
         
-        # Process duplications
-        dat_dup = dat[dat['final.event'] == 'dup'].copy()
-        if len(dat_dup) > 0:
-            dat_dup['delsize'] = self.genome_length - dat_dup['delsize']
-            dat.loc[dat['final.event'] == 'dup', 'delsize'] = dat_dup['delsize']
-        
-        # Grouped overlap elimination - dels and dups in separate subcircles
-        def assign_radii_by_type(data, base_radius=380, radius_diff=5):
+        # NESTED FUNCTIONS
+        def assign_radii_by_type(data, base_radius=380, radius_diff=8):
+            """Assign radii to events of a single type within their allocated radius range"""
             if len(data) == 0:
                 return data
             
-            data = data.sort_values('delsize', ascending=False).reset_index(drop=True)
+            data = data.sort_values(['group', 'deg1'], ascending=[True, True]).reset_index(drop=True)
             data['radius'] = 0
             
             def events_overlap(event1, event2):
-                start1, end1 = event1['deg1'], event1['deg2']
-                start2, end2 = event2['deg1'], event2['deg2']
+                start1, end1 = event1['deg1'] % 360, event1['deg2'] % 360
+                start2, end2 = event2['deg1'] % 360, event2['deg2'] % 360
+                min_gap = 4
                 
-                start1, end1, start2, end2 = start1 % 360, end1 % 360, start2 % 360, end2 % 360
+                def normalize_arc(start, end):
+                    return [(start, 360), (0, end)] if start > end else [(start, end)]
                 
-                if start1 > end1:
-                    if start2 > end2:
-                        return True
-                    else:
-                        return (start2 <= end1) or (end2 >= start1)
-                elif start2 > end2:
-                    return (start1 <= end2) or (end1 >= start2)
-                else:
-                    return not (end1 < start2 or end2 < start1)
+                arcs1, arcs2 = normalize_arc(start1, end1), normalize_arc(start2, end2)
+                for arc1_start, arc1_end in arcs1:
+                    for arc2_start, arc2_end in arcs2:
+                        if not (arc1_end + min_gap <= arc2_start or arc2_end + min_gap <= arc1_start):
+                            return True
+                return False
             
-            for i in range(len(data)):
-                assigned = False
-                test_radius = base_radius
+            unique_groups = data['group'].unique()
+            group_counts = data['group'].value_counts().to_dict()
+            
+            single_event_groups = [g for g in unique_groups if group_counts[g] == 1]
+            multi_event_groups = [g for g in unique_groups if group_counts[g] > 1]
+            
+            group_band_size = 18
+            group_gap = 6
+            current_radius = base_radius
+            assignments = {}
+            
+            # Assign dedicated bands to multi-event groups
+            for group_id in sorted(multi_event_groups, key=self.group_sort_key):
+                band_top = current_radius
+                band_bottom = band_top - group_band_size
+                assignments[group_id] = {'band_top': band_top, 'band_bottom': band_bottom, 'shared': False}
+                current_radius = band_bottom - group_gap
+            
+            # Pack single-event groups on shared radii  
+            shared_levels = []
+            for group_id in sorted(single_event_groups, key=self.group_sort_key):
+                event_deg = data[data['group'] == group_id].iloc[0]['deg1']
                 
-                while not assigned and test_radius > 120:
-                    conflict_found = False
-                    
-                    for j in range(len(data)):
-                        if j != i and data.loc[j, 'radius'] == test_radius:
-                            if events_overlap(data.loc[i], data.loc[j]):
-                                conflict_found = True
+                # Try to share with existing level
+                placed = False
+                for level in shared_levels:
+                    if all(abs(event_deg - deg) >= 90 and abs(event_deg - deg) <= 270 
+                        for deg in level['degrees']):
+                        level['degrees'].append(event_deg)
+                        assignments[group_id] = {'radius': level['radius'], 'shared': True}
+                        placed = True
+                        break
+                
+                if not placed:
+                    new_radius = current_radius - group_gap
+                    shared_levels.append({'radius': new_radius, 'degrees': [event_deg]})
+                    assignments[group_id] = {'radius': new_radius, 'shared': True}
+                    current_radius = new_radius - group_gap
+            
+            # Assign actual radii to events
+            for group_id, assignment in assignments.items():
+                group_indices = data[data['group'] == group_id].index.tolist()
+                
+                if assignment['shared']:
+                    for idx in group_indices:
+                        data.loc[idx, 'radius'] = assignment['radius']
+                else:
+                    band_top, band_bottom = assignment['band_top'], assignment['band_bottom']
+                    for i, idx in enumerate(group_indices):
+                        test_radius = band_top
+                        while test_radius >= band_bottom:
+                            if not any(data.loc[prev_idx, 'radius'] == test_radius and 
+                                    events_overlap(data.loc[idx], data.loc[prev_idx])
+                                    for prev_idx in group_indices[:i]):
+                                data.loc[idx, 'radius'] = test_radius
                                 break
-                    
-                    if not conflict_found:
-                        data.loc[i, 'radius'] = test_radius
-                        assigned = True
-                    else:
-                        test_radius -= radius_diff
-                
-                if not assigned:
-                    data.loc[i, 'radius'] = 130
+                            test_radius -= 2
+                        else:
+                            data.loc[idx, 'radius'] = band_bottom
             
             return data
-        
-        # Separate processing for deletions and duplications
+
+        def calculate_dynamic_radius_layout(dat_del, dat_dup, base_radius=400, separator_frac=0.15):
+            """Calculate dynamic radius layout with proportional space allocation"""
+            
+            def calculate_space_needed(data):
+                if len(data) == 0:
+                    return 0
+                groups = data['group'].unique()
+                group_counts = data['group'].value_counts().to_dict()
+                
+                multi_event_groups = len([g for g in groups if group_counts[g] > 1])
+                single_events = len([g for g in groups if group_counts[g] == 1])
+                shared_levels_needed = max(1, (single_events + 3) // 4)
+                
+                return multi_event_groups + shared_levels_needed
+            
+            del_space_needed = calculate_space_needed(dat_del)
+            dup_space_needed = calculate_space_needed(dat_dup)
+            
+            total_group_space = del_space_needed + dup_space_needed
+            
+            if total_group_space == 0:
+                return dat_del, dat_dup, base_radius * separator_frac, base_radius
+            
+            available_frac = 1.0 - separator_frac
+            del_frac = (del_space_needed / total_group_space) * available_frac
+            dup_frac = (dup_space_needed / total_group_space) * available_frac
+            
+            # Determine outer vs inner based on group numbers
+            del_min_group = int(min(dat_del['group'].str[1:]).replace('', '999')) if len(dat_del) > 0 else 999
+            dup_min_group = int(min(dat_dup['group'].str[1:]).replace('', '999')) if len(dat_dup) > 0 else 999
+            
+            if dup_min_group < del_min_group:
+                outer_frac, inner_frac = dup_frac, del_frac
+                outer_data, inner_data = dat_dup, dat_del
+                outer_type = 'dup'
+            else:
+                outer_frac, inner_frac = del_frac, dup_frac  
+                outer_data, inner_data = dat_del, dat_dup
+                outer_type = 'del'
+            
+            # Calculate radius ranges
+            inner_max = base_radius * inner_frac
+            outer_min = base_radius * (inner_frac + separator_frac)
+            blacklist_radius = (inner_max + outer_min) / 2
+            
+            print(f"DEBUG: Fractions - Inner: {inner_frac:.3f}, Separator: {separator_frac:.3f}, Outer: {outer_frac:.3f}")
+            print(f"DEBUG: Ranges - Inner: [0-{inner_max:.1f}], Outer: [{outer_min:.1f}-{base_radius}], BL: {blacklist_radius:.1f}")
+            
+            # Assign radii within ranges
+            if len(inner_data) > 0:
+                inner_data = assign_radii_by_type(inner_data, base_radius=inner_max, radius_diff=6)
+            if len(outer_data) > 0:
+                outer_data = assign_radii_by_type(outer_data, base_radius=base_radius, radius_diff=6)
+            
+            # Return in correct order
+            if outer_type == 'dup':
+                return inner_data, outer_data, blacklist_radius, base_radius
+            else:
+                return outer_data, inner_data, blacklist_radius, base_radius
+
+        # MAIN PROCESSING
+        # Separate data by type
         dat_del = dat[dat['final.event'] == 'del'].copy()
         dat_dup = dat[dat['final.event'] == 'dup'].copy()
-        
-        # Assign radii in separate subcircles
-        if len(dat_del) > 0:
-            dat_del = assign_radii_by_type(dat_del, base_radius=380, radius_diff=5)
-        
+
+        # Process duplication delsize
         if len(dat_dup) > 0:
-            max_del_radius = dat_del['radius'].max() if len(dat_del) > 0 else 380
-            dup_base_radius = max_del_radius - 15
-            dat_dup = assign_radii_by_type(dat_dup, base_radius=dup_base_radius, radius_diff=5)
-        
-        # Combine back
+            dat_dup['delsize'] = self.genome_length - dat_dup['delsize']
+
+        # Calculate dynamic layout
+        dat_del, dat_dup, blacklist_radius, dynamic_radius = calculate_dynamic_radius_layout(dat_del, dat_dup, base_radius=400)
+
+        # Combine for processing
         dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if len(dat_dup) > 0 else dat_del
         
-        # Automatically shrink blacklist circle
-        min_event_radius = dat_processed['radius'].min() if len(dat_processed) > 0 else 200
-        blacklist_radius = max(50, min_event_radius - 30)
+        # Calculate color scales
+        del_events = dat_processed[dat_processed['final.event'] == 'del']
+        dup_events = dat_processed[dat_processed['final.event'] == 'dup']
+        del_max = del_events['value'].max() if len(del_events) > 0 else 0
+        del_min = del_events['value'].min() if len(del_events) > 0 else 0
+        dup_max = dup_events['value'].max() if len(dup_events) > 0 else 0  
+        dup_min = dup_events['value'].min() if len(dup_events) > 0 else 0
         
-        # Create figure with extended area and constrained subplot for circle
+        # Create figure
         fig = plt.figure(figsize=figsize)
-        
-        # Create polar subplot in CENTER portion of figure (leaving space for legends)
-        ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.9])  # [left, bottom, width, height]
-        ax.set_ylim(0, 400)
+        ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.9])
+        ax.set_ylim(0, dynamic_radius + 30)
         ax.set_theta_zero_location('N')
         ax.set_theta_direction(-1)
         
-        # Draw genome circle
-        circle = patches.Circle((0, 0), 390, fill=False, linewidth=3,
+        # Draw genome circle (use dynamic radius instead of hardcoded 390)
+        circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
                             color='gray', transform=ax.transData._b)
         ax.add_patch(circle)
         
@@ -1007,6 +1211,9 @@ class MitoPlotter:
                                             color='lightgray', linestyle='--', alpha=0.7,
                                             transform=ax.transData._b)
             ax.add_patch(separator_circle)
+            
+            # Find actual minimum event radius for inward lines
+            min_event_radius = dat_processed['radius'].min() if len(dat_processed) > 0 else 50
             
             for region in blacklist_regions:
                 start_pos = int(region['start'])
@@ -1024,60 +1231,53 @@ class MitoPlotter:
                 
                 theta = np.linspace(start_deg, end_deg, 50)
                 ax.plot(theta, [blacklist_radius]*len(theta), color='black', linewidth=4, alpha=0.9, solid_capstyle='round')
-                ax.plot([start_deg, start_deg], [blacklist_radius, 390], color='gray', linewidth=1, linestyle='--', alpha=0.6)
-                ax.plot([end_deg, end_deg], [blacklist_radius, 390], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                
+                # Radial lines from blacklist to outer circle and inner events
+                ax.plot([start_deg, start_deg], [blacklist_radius, dynamic_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                ax.plot([end_deg, end_deg], [blacklist_radius, dynamic_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                
+                # Lines extending inward if there are inner events
+                if min_event_radius < blacklist_radius:
+                    ax.plot([start_deg, start_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                    ax.plot([end_deg, end_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
         
         # Add position markers
         positions = np.arange(0, self.genome_length, 1000)
         for pos in positions:
             deg = np.radians(358 * pos / self.genome_length)
-            ax.plot([deg, deg], [390, 395], color='gray', linewidth=1)
-            ax.text(deg, 410, f'{pos//1000}', ha='center', va='center', 
+            ax.plot([deg, deg], [dynamic_radius, dynamic_radius + 5], color='gray', linewidth=1)
+            ax.text(deg, dynamic_radius + 15, f'{pos//1000}', ha='center', va='center', 
                 fontsize=9, color='gray')
         
-        # PURE COLOR GRADIENTS - pale but clearly blue/red
-        max_het = dat_processed['value'].max()
-        min_het = dat_processed['value'].min()
-        
-        def get_pure_blue_color(het_val):
-            """Pure blue gradient - baby blue to deep blue"""
+        # Color functions
+        def get_pure_blue_color(het_val, min_het, max_het):
             if max_het > min_het:
                 norm = (het_val - min_het) / (max_het - min_het)
             else:
                 norm = 0.5
-
-            # Blue goes from baby blue (~0.8, 0.9, 1) to deep blue (0, 0, 1)
-            blue   = 1.0
-            red    = 0.8 * (1 - norm)          # fade red out completely
-            green  = 0.9 * (1 - norm)          # fade green out completely
-            blue   = 1.0 * (1 - norm) + norm   # stays maxed at 1, but norm smooths transition
-
+            blue = 1.0
+            red = 0.8 * (1 - norm)
+            green = 0.9 * (1 - norm)
             return (red, green, blue)
 
-        
-        def get_pure_red_color(het_val):
-            """Pure red gradient - baby pink to deep red"""
+        def get_pure_red_color(het_val, min_het, max_het):
             if max_het > min_het:
                 norm = (het_val - min_het) / (max_het - min_het)
             else:
                 norm = 0.5
-
-            # Red goes from baby pink (~1.0, 0.8, 0.85) to deep red (1.0, 0, 0)
-            red   = 1.0
-            green = 0.8 * (1 - norm)   # fades green to 0
-            blue  = 0.85 * (1 - norm)  # fades blue to 0
-
+            red = 1.0
+            green = 0.8 * (1 - norm)
+            blue = 0.85 * (1 - norm)
             return (red, green, blue)
 
-        
-        def get_continuous_alpha(het_val):
+        def get_continuous_alpha(het_val, min_het, max_het):
             if max_het > min_het:
                 norm = (het_val - min_het) / (max_het - min_het)
             else:
                 norm = 0.5
-            return 0.5 + 0.45 * norm
+            return 0.75 + 0.2 * norm
         
-        # Plot events with pure color gradients
+        # Plot events
         for i, (_, event) in enumerate(dat_processed.iterrows()):
             deg1_rad = np.radians(event['deg1'])
             deg2_rad = np.radians(event['deg2'])
@@ -1085,19 +1285,163 @@ class MitoPlotter:
             het_val = event['value']
             
             if blacklist_regions and event['blacklist_crossing']:
-                color = (0.2, 0.8, 0.2)  # Bright lime green
+                color = (0.2, 0.8, 0.2)
                 alpha = 0.9
+                print(f"DEBUG: Plotting blacklist event at {event['start']}-{event['end']}")
             else:
                 if event['final.event'] == 'del':
-                    color = get_pure_blue_color(het_val)
+                    color = get_pure_blue_color(het_val, del_min, del_max)
+                    alpha = get_continuous_alpha(het_val, del_min, del_max)
                 else:
-                    color = get_pure_red_color(het_val)
-                alpha = get_continuous_alpha(het_val)
-            
-            # Draw arc
+                    color = get_pure_red_color(het_val, dup_min, dup_max) 
+                    alpha = get_continuous_alpha(het_val, dup_min, dup_max)
+                
             theta = np.linspace(deg1_rad, deg2_rad, 100)
             linewidth = 2.0 if len(dat_processed) <= 100 else (1.5 if len(dat_processed) <= 200 else 1.0)
             ax.plot(theta, [radius]*len(theta), color=color, linewidth=linewidth, alpha=alpha)
+
+        # Group labeling
+        if len(dat_processed) > 0:
+            group_representatives = {}
+            for _, event in dat_processed.iterrows():
+                group_id = event['group']
+                het_val = event['value']
+                # pick up the leftmost one for labeling
+                if group_id not in group_representatives or event['deg1'] < group_representatives[group_id]['deg']:
+                    group_representatives[group_id] = {
+                        'deg': event['deg1'],  # Now using leftmost position
+                        'radius': event['radius'],
+                        'het_val': het_val,
+                        'event_type': event['final.event']
+                    }
+            
+            for group_id, info in group_representatives.items():
+                breakpoint_deg_rad = np.radians(info['deg'])
+                breakpoint_radius = info['radius']
+                label_radius = breakpoint_radius + 17
+                
+                label_color = 'blue' if info['event_type'] == 'del' else 'red'
+                
+                ax.plot([breakpoint_deg_rad, breakpoint_deg_rad], 
+                        [breakpoint_radius + 1.5, label_radius - 4], 
+                        color='grey', linewidth=1, alpha=0.7, linestyle='-')
+                
+                ax.plot(breakpoint_deg_rad, breakpoint_radius, 
+                        marker='o', markersize=3, color='grey', alpha=0.8)
+                
+                ax.text(breakpoint_deg_rad, label_radius, group_id, 
+                        ha='center', va='center', fontsize=6, weight='normal',
+                        color=label_color,
+                        bbox=dict(boxstyle="round,pad=0.15", facecolor='white', 
+                                alpha=0.9, edgecolor=label_color, linewidth=0.8))
+
+        # LEGENDS IN SEPARATE AREAS OF THE FIGURE
+            
+        # 1. EVENT COUNT SUMMARY - Top left area
+        count_text = f"Del: {del_count}  Dup: {dup_count}\n"
+        if blacklist_regions:
+            count_text += f"BL-crossing Del: {bl_del_count}\nBL-crossing Dup: {bl_dup_count}"
+        
+        fig.text(0.02, 0.85, count_text, fontsize=11, weight='bold',
+                bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.9, edgecolor='gray'),
+                verticalalignment='top')
+        
+        # 2. SEPARATE GRADIENT LEGENDS - independently scaled
+        legend_x = 0.05
+        legend_y = 0.4
+        legend_height = 0.25
+        legend_width = 0.03
+
+        # Create separate gradient bars
+        n_steps = 100
+        step_height = legend_height / n_steps
+        bar_gap = 0.02
+        bar_width = (legend_width - bar_gap) / 2
+
+        # Deletion gradient (left bar)
+        if len(del_events) > 0:
+            for i in range(n_steps):
+                norm = i / (n_steps - 1)
+                het_val = del_min + norm * (del_max - del_min) if del_max > del_min else del_min
+                y_pos = legend_y - legend_height/2 + i * step_height
+
+                del_color = get_pure_blue_color(het_val, del_min, del_max)
+                del_alpha = get_continuous_alpha(het_val, del_min, del_max)
+                del_rect = plt.Rectangle(
+                    (legend_x, y_pos), bar_width, step_height,
+                    facecolor=del_color, alpha=del_alpha, edgecolor='none',
+                    transform=fig.transFigure
+                )
+                fig.patches.append(del_rect)
+
+        # Duplication gradient (right bar) 
+        if len(dup_events) > 0:
+            for i in range(n_steps):
+                norm = i / (n_steps - 1)
+                het_val = dup_min + norm * (dup_max - dup_min) if dup_max > dup_min else dup_min
+                y_pos = legend_y - legend_height/2 + i * step_height
+
+                dup_color = get_pure_red_color(het_val, dup_min, dup_max)
+                dup_alpha = get_continuous_alpha(het_val, dup_min, dup_max)
+                dup_rect = plt.Rectangle(
+                    (legend_x + bar_width + bar_gap, y_pos), bar_width, step_height,
+                    facecolor=dup_color, alpha=dup_alpha, edgecolor='none',
+                    transform=fig.transFigure
+                )
+                fig.patches.append(dup_rect)
+
+        # Labels and values
+        del_label_x = legend_x + bar_width / 2
+        fig.text(del_label_x, legend_y + legend_height/2 + 0.01, "Del", 
+                fontsize=8, ha='center', weight='bold', color='blue')
+
+        dup_label_x = legend_x + bar_width + bar_gap + bar_width / 2
+        fig.text(dup_label_x, legend_y + legend_height/2 + 0.01, "Dup", 
+                fontsize=8, ha='center', weight='bold', color='red')
+
+        # Separate value labels for each scale
+        if len(del_events) > 0:
+            for pos, val in [(1, del_max), (0, del_min)]:
+                y_pos = legend_y - legend_height/2 + pos * legend_height
+                fig.text(legend_x - 0.02, y_pos, f"{val:.1f}%", 
+                        fontsize=8, va='center', ha='right', color='blue')
+
+        if len(dup_events) > 0:
+            for pos, val in [(1, dup_max), (0, dup_min)]:
+                y_pos = legend_y - legend_height/2 + pos * legend_height  
+                fig.text(legend_x + legend_width + 0.01, y_pos, f"{val:.1f}%", 
+                        fontsize=8, va='center', color='red')
+
+        fig.text(legend_x + legend_width/2, legend_y - legend_height/2 - 0.03, 
+                "Heteroplasmy (%)", fontsize=11, weight='bold', ha='center')
+        
+        # 3. Blacklist crossing legend (if needed)
+        bars_top_y = legend_y + legend_height/2        
+        label_offset = 0.04                            
+        bl_gap = 0.02                                  
+
+        bl_x = 0.02
+        bl_y = bars_top_y + label_offset + bl_gap      
+        bl_width = 0.1
+        bl_height = 0.05
+
+        if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
+            bl_rect = plt.Rectangle(
+                (bl_x, bl_y), bl_width, bl_height,
+                facecolor=(0.2, 0.8, 0.2), alpha=0.6,
+                transform=fig.transFigure
+            )
+            fig.patches.append(bl_rect)
+
+            fig.text(
+                bl_x + bl_width/2, bl_y + bl_height/2,
+                "Blacklist\ncrossing",
+                fontsize=9, ha='center', va='center', weight='bold'
+            )
+    
+        ax.grid(False)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
         
         # LEGENDS IN SEPARATE AREAS OF THE FIGURE
         
@@ -1110,64 +1454,74 @@ class MitoPlotter:
                 bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.9, edgecolor='gray'),
                 verticalalignment='top')
         
-        # 2. GGPLOT2-STYLE GRADIENT LEGEND - Left middle area  
+        # 2. SEPARATE GRADIENT LEGENDS - independently scaled
         legend_x = 0.05
         legend_y = 0.4
         legend_height = 0.25
         legend_width = 0.03
-        
-        # Create continuous gradient bars
+
+        # Create separate gradient bars
         n_steps = 100
         step_height = legend_height / n_steps
-
-        bar_gap = 0.017  # small space between Del and Dup bars
+        bar_gap = 0.02
         bar_width = (legend_width - bar_gap) / 2
-        
-        for i in range(n_steps):
-            norm = i / (n_steps - 1)
-            het_val = min_het + norm * (max_het - min_het)
-            y_pos = legend_y - legend_height/2 + i * step_height
 
-            # Del gradient bar (pure blue, left)
-            del_color = get_pure_blue_color(het_val)
-            del_alpha = get_continuous_alpha(het_val)
-            del_rect = plt.Rectangle(
-                (legend_x, y_pos), bar_width, step_height,
-                facecolor=del_color, alpha=del_alpha, edgecolor='none',
-                transform=fig.transFigure
-            )
-            fig.patches.append(del_rect)
+        # Deletion gradient (left bar)
+        if len(del_events) > 0:
+            for i in range(n_steps):
+                norm = i / (n_steps - 1)
+                het_val = del_min + norm * (del_max - del_min) if del_max > del_min else del_min
+                y_pos = legend_y - legend_height/2 + i * step_height
 
-            # Dup gradient bar (pure red, right, shifted by gap)
-            dup_color = get_pure_red_color(het_val)
-            dup_alpha = get_continuous_alpha(het_val)
-            dup_rect = plt.Rectangle(
-                (legend_x + bar_width + bar_gap, y_pos), bar_width, step_height,
-                facecolor=dup_color, alpha=dup_alpha, edgecolor='none',
-                transform=fig.transFigure
-            )
-            fig.patches.append(dup_rect)
-    
-        # Del label centered above left bar
+                del_color = get_pure_blue_color(het_val, del_min, del_max)
+                del_alpha = get_continuous_alpha(het_val, del_min, del_max)
+                del_rect = plt.Rectangle(
+                    (legend_x, y_pos), bar_width, step_height,
+                    facecolor=del_color, alpha=del_alpha, edgecolor='none',
+                    transform=fig.transFigure
+                )
+                fig.patches.append(del_rect)
+
+        # Duplication gradient (right bar) 
+        if len(dup_events) > 0:
+            for i in range(n_steps):
+                norm = i / (n_steps - 1)
+                het_val = dup_min + norm * (dup_max - dup_min) if dup_max > dup_min else dup_min
+                y_pos = legend_y - legend_height/2 + i * step_height
+
+                dup_color = get_pure_red_color(het_val, dup_min, dup_max)
+                dup_alpha = get_continuous_alpha(het_val, dup_min, dup_max)
+                dup_rect = plt.Rectangle(
+                    (legend_x + bar_width + bar_gap, y_pos), bar_width, step_height,
+                    facecolor=dup_color, alpha=dup_alpha, edgecolor='none',
+                    transform=fig.transFigure
+                )
+                fig.patches.append(dup_rect)
+
+        # Labels and values
         del_label_x = legend_x + bar_width / 2
-        fig.text(del_label_x,
-                 legend_y + legend_height/2 + 0.01,
-                 "Del", fontsize=8, ha='center', weight='bold', color='blue')
+        fig.text(del_label_x, legend_y + legend_height/2 + 0.01, "Del", 
+                fontsize=8, ha='center', weight='bold', color='blue')
 
-        # Dup label centered above right bar
         dup_label_x = legend_x + bar_width + bar_gap + bar_width / 2
-        fig.text(dup_label_x,
-                 legend_y + legend_height/2 + 0.01,
-                 "Dup", fontsize=8, ha='center', weight='bold', color='red')
-        
-        # Heteroplasmy value labels
-        for i, (pos, val) in enumerate([(1, max_het), (0.5, min_het + 0.5*(max_het-min_het)), (0, min_het)]):
-            y_pos = legend_y - legend_height/2 + pos * legend_height
-            fig.text(legend_x + legend_width + 0.01, y_pos, f"{val:.3f}", 
-                    fontsize=9, va='center')
-        
-        fig.text(legend_x - 0.05, legend_y, "Heteroplasmy", 
-                fontsize=11, weight='bold', va='center', rotation=90)
+        fig.text(dup_label_x, legend_y + legend_height/2 + 0.01, "Dup", 
+                fontsize=8, ha='center', weight='bold', color='red')
+
+        # Separate value labels for each scale
+        if len(del_events) > 0:
+            for pos, val in [(1, del_max), (0, del_min)]:
+                y_pos = legend_y - legend_height/2 + pos * legend_height
+                fig.text(legend_x - 0.02, y_pos, f"{val:.1f}%", 
+                        fontsize=8, va='center', ha='right', color='blue')
+
+        if len(dup_events) > 0:
+            for pos, val in [(1, dup_max), (0, dup_min)]:
+                y_pos = legend_y - legend_height/2 + pos * legend_height  
+                fig.text(legend_x + legend_width + 0.01, y_pos, f"{val:.1f}%", 
+                        fontsize=8, va='center', color='red')
+
+        fig.text(legend_x + legend_width/2, legend_y - legend_height/2 - 0.03, 
+                "Heteroplasmy (%)", fontsize=11, weight='bold', ha='center')
         
         # 3. Blacklist crossing legend (if needed) - Left bottom
         # Compute top of Del/Dup bars including their labels
@@ -1212,7 +1566,7 @@ class MitoPlotter:
         print(f"Plot saved to {output_file}")
         print(f"Plotted {len(dat_processed)} events with pure color gradients in separate legend areas")
 
-    def save_results(self, events, output_file, genome_fasta=None, blacklist_file=None):
+    def save_results(self, events, output_file, genome_fasta=None, blacklist_regions=None):
         """Save processed results following R script logic exactly"""
         if len(events) == 0:
             print("No events to save")
@@ -1279,26 +1633,10 @@ class MitoPlotter:
         )
 
         # --- Blacklist crossing flag using final coordinates ---
-        # Load blacklist regions if provided
-        try:
-            blacklist_regions = self._load_blacklist_regions(blacklist_file)
-        except Exception as e:
-            print(f"Warning: Could not load blacklist file: {e}")
-
-        def crosses_blacklist(start_pos, end_pos):
-            if not blacklist_regions:
-                return False
-            for region in blacklist_regions:
-                bl_start, bl_end = int(region['start']), int(region['end'])
-                if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
-                    return True
-            return False
-
         res['blacklist_crossing'] = [
-            'yes' if crosses_blacklist(row['final.start'], row['final.end']) else 'no'
+            'yes' if self._crosses_blacklist(row['final.start'], row['final.end'], blacklist_regions) else 'no'
             for _, row in res.iterrows()
         ]
-    
         
         # Get flanking sequences
         if genome_fasta and Path(genome_fasta).exists():
@@ -1325,10 +1663,11 @@ class MitoPlotter:
                 'seq': ['NA'] * len(res)
             })
         
-        # Create final output exactly like R script
+        # Create final output exactly like R script PLUS group information
         res_final = pd.DataFrame({
             'sample': res['sample'],
             'cluster.id': res['cluster'],
+            'group': res.get('group', 'G1'),  # Add group column with default
             'alt.reads': res['nread'].astype(int),
             'ref.reads': res['tread'].astype(int),
             'heteroplasmy': res['perc'],
@@ -1350,17 +1689,17 @@ class MitoPlotter:
         print(f"Results saved to {output_file}")
         print(f"Events: {len(res_final)}")
 
-
-    def save_summary(self, events, output_file, analysis_stats, blacklist_file=None):
+    def save_summary(self, events, output_file, analysis_stats, blacklist_regions=None):
         """Save analysis summary with biologically meaningful metrics based on MitoSAlt literature"""
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         
         # Classify event pattern using literature-based approach (excluding blacklist events)
         if len(events) > 0:
-            classification, reason, criteria = self._classify_event_pattern(events, blacklist_file)
+            classification, reason, criteria, events_with_groups = self._classify_event_pattern(events, blacklist_regions)
         else:
             classification, reason = "No events", "No events detected"
             criteria = {}
+            events_with_groups = pd.DataFrame()
         
         # Count events by type
         del_count = (events['final.event'] == 'del').sum() if len(events) > 0 else 0
@@ -1409,6 +1748,44 @@ class MitoPlotter:
                 f.write(f"Events used for classification: {criteria.get('total_events', 0)} (of {criteria.get('total_raw_events', 0)} total)\n")
             f.write("\n")
             
+            # Spatial groups analysis (NEW SECTION)
+            f.write("Spatial Groups Analysis:\n")
+            f.write("-" * 25 + "\n")
+            if 'group_analysis' in criteria and criteria['group_analysis']:
+                # Group by event type for better reporting
+                del_groups = [g for g in criteria['group_analysis'] if g.get('event_type') == 'del']
+                dup_groups = [g for g in criteria['group_analysis'] if g.get('event_type') == 'dup']
+                
+                if del_groups:
+                    f.write("Deletion groups:\n")
+                    for group_info in del_groups:
+                        rep = group_info['representative']
+                        actual_size = rep['end'] - rep['start']
+                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
+                            f"max heteroplasmy {rep['heteroplasmy']:.1f} "
+                            f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
+                
+                if dup_groups:
+                    f.write("Duplication groups:\n")
+                    for group_info in dup_groups:
+                        rep = group_info['representative']
+                        actual_size = rep['end'] - rep['start']
+                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
+                            f"max heteroplasmy {rep['heteroplasmy']:.1f} "
+                            f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
+                
+                if not del_groups and not dup_groups:
+                    f.write("Groups detected but event types not properly classified\n")
+                    # Fallback - show all groups regardless of type
+                    for group_info in criteria['group_analysis']:
+                        rep = group_info['representative']
+                        event_type = group_info.get('event_type', rep.get('event_type', 'unknown'))
+                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} {event_type} events, "
+                            f"max heteroplasmy {rep['heteroplasmy']:.1%}\n")
+            else:
+                f.write("No spatial groups identified\n")
+            f.write("\n")
+            
             # Heteroplasmy-based analysis (KEY BIOLOGICAL METRIC)
             f.write("Heteroplasmy distribution (literature-based thresholds):\n")
             f.write("-" * 55 + "\n")
@@ -1416,8 +1793,8 @@ class MitoPlotter:
                 f.write(f"High heteroplasmy events (≥30%): {criteria.get('high_het_count', 0)}\n")
                 f.write(f"Medium heteroplasmy events (1-30%): {criteria.get('medium_het_count', 0)}\n")
                 f.write(f"Low heteroplasmy events (<1%): {criteria.get('low_het_count', 0)}\n")
-                f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f} ({criteria.get('max_heteroplasmy', 0)*100:.1f}%)\n")
-                f.write(f"Median heteroplasmy: {criteria.get('median_heteroplasmy', 0):.3f} ({criteria.get('median_heteroplasmy', 0)*100:.1f}%)\n")
+                f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f}%\n")
+                f.write(f"Median heteroplasmy: {criteria.get('median_heteroplasmy', 0):.3f}%\n")
             else:
                 f.write("No events detected\n")
             f.write("\n")
@@ -1451,25 +1828,36 @@ class MitoPlotter:
                 f.write(f"Size coefficient of variation: {criteria.get('size_coefficient_variation', 0):.2f}\n")
             f.write("\n")
             
-            # Heteroplasmy statistics (expanded)
+            # Heteroplasmy statistics
             f.write("Heteroplasmy statistics:\n")
             f.write("-" * 25 + "\n")
-            f.write(f"Min heteroplasmy: {het_stats['min']:.4f} ({het_stats['min']*100:.2f}%)\n")
-            f.write(f"Max heteroplasmy: {het_stats['max']:.4f} ({het_stats['max']*100:.2f}%)\n")
-            f.write(f"Mean heteroplasmy: {het_stats['mean']:.4f} ({het_stats['mean']*100:.2f}%)\n")
-            f.write(f"Median heteroplasmy: {het_stats['median']:.4f} ({het_stats['median']*100:.2f}%)\n\n")
-            
+            f.write(f"Min heteroplasmy: {het_stats['min']:.4f}%\n")
+            f.write(f"Max heteroplasmy: {het_stats['max']:.4f}%\n")
+            f.write(f"Mean heteroplasmy: {het_stats['mean']:.4f}%\n")
+            f.write(f"Median heteroplasmy: {het_stats['median']:.4f}%\n\n")
+
             # Classification details (DETAILED TECHNICAL SECTION)
             if criteria and 'classification_scores' in criteria:
-                f.write("Classification algorithm details:\n")
+                f.write("Classification Algorithm Details:\n")
                 f.write("-" * 35 + "\n")
                 scores = criteria['classification_scores']
-                f.write(f"Single pattern score: {scores['single_score']}\n")
-                f.write(f"Multiple pattern score: {scores['multiple_score']}\n")
-                f.write(f"High heteroplasmy threshold: ≥30%\n")
-                f.write(f"Low heteroplasmy threshold: <1%\n")
-                f.write(f"Multiple event threshold: >20 events\n")
-                f.write(f"Major event threshold: ≤3 high-het events\n")
+                f.write(f"Single pattern score: {scores['single_score']} / 13 possible criteria\n")
+                f.write(f"Multiple pattern score: {scores['multiple_score']} / 13 possible criteria\n")
+                f.write(f"Decision: {'Single' if scores['single_score'] > scores['multiple_score'] else 'Multiple'} pattern (higher score wins)\n")
+                f.write("\n")
+                f.write("Score calculation:\n")
+                f.write("- Each pattern type has 13 biological criteria\n")
+                f.write("- Single pattern criteria: dominant high-het events, few total events, tight clustering, etc.\n")
+                f.write("- Multiple pattern criteria: many events, mixed types, scattered distribution, etc.\n")
+                f.write("- Score = count of criteria met for each pattern type\n")
+                f.write("\n")
+                f.write("Biological thresholds used:\n")
+                f.write(f"- High heteroplasmy threshold: ≥30% (pathogenic significance)\n")
+                f.write(f"- Significance threshold: ≥5% (above noise level)\n")
+                f.write(f"- Low heteroplasmy threshold: <1% (likely artifacts)\n")
+                f.write(f"- Multiple event threshold: >20 events (mouse model pattern)\n")
+                f.write(f"- Major event threshold: ≤3 high-het events (single pattern)\n")
+                f.write(f"- Spatial clustering radius: 500bp (biologically relevant)\n")
                 f.write("\n")
             
             # Biological interpretation
@@ -1537,9 +1925,19 @@ def main():
         heteroplasmy_limit=args.heteroplasmy_limit,
         flank_size=args.flank_size
     )
+
+    # Load blacklist regions
+    blacklist_regions = None
+    if args.blacklist:
+        try:
+            blacklist_regions = plotter._load_blacklist_regions(args.blacklist)
+            print(f"Loaded {len(blacklist_regions)} blacklist regions")
+        except Exception as e:
+            print(f"Warning: Could not load blacklist file: {e}")
+            blacklist_regions = []
     
     # Load and process data
-    result = plotter.load_data(args.cluster_file, args.breakpoint_file, args.blacklist)
+    result = plotter.load_data(args.cluster_file, args.breakpoint_file)
     if isinstance(result, tuple):
         events, stats = result
     else:
@@ -1547,6 +1945,9 @@ def main():
         stats = {}
     
     if len(events) > 0:
+        # Get events with group assignments from classification
+        classification, reason, criteria, events_with_groups = plotter._classify_event_pattern(events, blacklist_regions=blacklist_regions)
+        
         # Create output directories
         output_dir = Path(args.output_dir)
         plot_dir = output_dir / "plot"
@@ -1557,19 +1958,18 @@ def main():
         
         print(f"Processing {len(events)} events")
         
-        # Create plot
+        # Use the SAME filtered dataset for all operations to avoid index mismatch
         plot_file = plot_dir / f"{args.output_name}.png"
-        plotter.create_plot(events, str(plot_file), figsize=(10, 10), blacklist_file=args.blacklist)
+        plotter.create_plot(events_with_groups, str(plot_file), figsize=(10, 10), blacklist_regions=blacklist_regions)
         
-        # Save results
-        results_file = indel_dir / f"{args.output_name}.tsv"
-        plotter.save_results(events, str(results_file), args.genome_fasta, args.blacklist)
+        results_file = indel_dir / f"{args.output_name}.grouped.tsv"
+        plotter.save_results(events_with_groups, str(results_file), args.genome_fasta, blacklist_regions=blacklist_regions)
         
-        # Save summary
+        # Use filtered events for summary too to maintain consistency
         summary_file = indel_dir / f"{args.output_name}_summary.txt"
         print(f"Attempting to save summary to: {summary_file}")
         print(f"Stats available: {len(stats) if stats else 'None'}")
-        plotter.save_summary(events, str(summary_file), stats, args.blacklist)
+        plotter.save_summary(events_with_groups, str(summary_file), stats, blacklist_regions=blacklist_regions)
     else:
         print("No events to process")
 
