@@ -39,7 +39,7 @@ class MitoPlotter:
             print("Empty cluster file, no events to plot")
             return pd.DataFrame()
         
-        # Load cluster data exactly like R script
+        # Load cluster data
         print(f"Loading cluster file: {cluster_file}")
         clusters = pd.read_csv(cluster_file, sep='\t', header=None)
         clusters.columns = ['cluster', 'read', 'del.start', 'del.end', 'lfstart', 'lfend', 'nread', 'tread', 'perc']
@@ -51,7 +51,7 @@ class MitoPlotter:
         
         print(f"Loaded {len(clusters)} clusters")
         
-        # Calculate medians and ranges exactly like R script
+        # Calculate medians and ranges
         def calculate_median(x):
             return np.median([int(i) for i in str(x).split(',')])
         
@@ -68,7 +68,7 @@ class MitoPlotter:
         clusters['del.end.min'] = clusters['del.end'].apply(calculate_min)
         clusters['del.end.max'] = clusters['del.end'].apply(calculate_max)
         
-        # Create range strings exactly like R script (with spaces around dash)
+        # Create range strings (with spaces around dash)
         clusters['del.start.range'] = clusters['del.start.min'].astype(str) + ' - ' + clusters['del.start.max'].astype(str)
         clusters['del.end.range'] = clusters['del.end.min'].astype(str) + ' - ' + clusters['del.end.max'].astype(str)
         
@@ -82,7 +82,7 @@ class MitoPlotter:
             list_reads.extend(reads)
             length_list_reads.append(len(reads))
         
-        # Create res.read exactly like R script
+        # Create res.read 
         res_read_data = []
         for i, row in clusters.iterrows():
             sample = row['sample'] 
@@ -113,7 +113,7 @@ class MitoPlotter:
         print(f"Sample breakpoint data:\n{bp.head()}")
         print(f"Unique dloop values: {bp['dloop'].unique()}")
         
-        # Merge res.read with bp exactly like R script
+        # Merge res.read with bp 
         # res.read.bp<-merge(res.read,bp,by="read")
         res_read_bp = pd.merge(res_read, bp, on='read', how='inner')
         print(f"After merge with breakpoints: {len(res_read_bp)} records")
@@ -122,12 +122,12 @@ class MitoPlotter:
             print("No matching reads found between clusters and breakpoints")
             return pd.DataFrame()
         
-        # Get unique combinations exactly like R script
+        # Get unique combinations 
         # res.read.bp1<-unique(res.read.bp[,c(2,3,6)])  # sample, cluster, dloop
         res_read_bp1 = res_read_bp[['sample', 'cluster', 'dloop']].drop_duplicates()
         print(f"Unique cluster-dloop combinations: {len(res_read_bp1)}")
         
-        # Final merge exactly like R script
+        # Final merge 
         # res<-merge(res,res.read.bp1,by=c("sample","cluster"))
         final_clusters = pd.merge(clusters, res_read_bp1, on=['sample', 'cluster'], how='inner')
         print(f"Final clusters after merge: {len(final_clusters)}")
@@ -136,10 +136,10 @@ class MitoPlotter:
             print("No clusters remained after merging with breakpoint data")
             return pd.DataFrame()
         
-        # Calculate delsize exactly like R script
+        # Calculate delsize 
         final_clusters['delsize'] = final_clusters['del.end.median'] - final_clusters['del.start.median']
         
-        # Handle dloop wraparound exactly like R script
+        # Handle dloop wraparound
         dloop_mask = final_clusters['dloop'] == 'yes'
         if dloop_mask.any():
             final_clusters.loc[dloop_mask, 'delsize'] = (
@@ -150,7 +150,7 @@ class MitoPlotter:
         print(f"Calculated delsize for {len(final_clusters)} events")
         print(f"dloop=='yes' events: {dloop_mask.sum()}")
         
-        # Filter by heteroplasmy exactly like R script
+        # Filter by heteroplasmy 
         # if(nrow(res[res$perc>=hp.limit,])>0)
         final_clusters = final_clusters[final_clusters['perc'] >= self.heteroplasmy_limit]
         print(f"Events after heteroplasmy filter (>={self.heteroplasmy_limit}): {len(final_clusters)}")
@@ -207,7 +207,7 @@ class MitoPlotter:
             Rs = self.ori_l[0]  # ols
             Re = self.ori_l[1]  # ole
             
-            # Coordinate assignment exactly like R script
+            # Coordinate assignment
             if dloop == 'yes':
                 Ds = clusters.loc[i, 'del.end.median']    # Swapped
                 De = clusters.loc[i, 'del.start.median']  # Swapped
@@ -337,7 +337,7 @@ class MitoPlotter:
 
     def _build_group_info(self, group, event_type):
         """Build group information dictionary"""
-        # Thresholds as same in classify events 
+        # Thresholds as same in classify events - to be made as global variables
         HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
         LOW_HETEROPLASMY_THRESHOLD = 1.0    # 1% - potential artifacts/minor events
         SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
@@ -497,7 +497,7 @@ class MitoPlotter:
 
     def _classify_event_pattern(self, events, blacklist_regions=None):
         """
-        Classify events as Single or Multiple based on MitoSAlt literature criteria:
+        Classify events as Single or Multiple based on literature criteria:
         - Single: Dominated by one or few high-heteroplasmy events (typically >30-35%)
         - Multiple: Many low-heteroplasmy events, often representing different mechanisms
         
@@ -524,7 +524,7 @@ class MitoPlotter:
             events_for_classification = events
             blacklist_filtered_count = 0
         
-        # Key biological thresholds based on literature
+        # Key biological thresholds based on literature - to be made global variables
         HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
         LOW_HETEROPLASMY_THRESHOLD = 1.0   # 1% - potential artifacts/minor events
         SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
@@ -658,7 +658,7 @@ class MitoPlotter:
             return classification, reason_str, criteria, events_with_groups
 
         # Decision logic enhanced with proper spatial grouping analysis
-        # SINGLE EVENT PATTERN criteria (ENHANCED)
+        # SINGLE EVENT PATTERN criteria
         single_pattern_indicators = [
             # Criterion 1: Dominant high-heteroplasmy event(s)
             len(high_het_events) >= 1 and len(high_het_events) <= MAJOR_EVENT_COUNT_THRESHOLD,
@@ -678,26 +678,26 @@ class MitoPlotter:
             # Criterion 6: Dominant single type even with mixed low-het noise
             (significant_del_count >= 1 and significant_dup_count == 0) or (significant_dup_count >= 1 and significant_del_count == 0),
             
-            # ENHANCED: Dominant group with most events (≥70% in main group)
+            # Criterion 7: Dominant group with most events (≥70% in main group)
             dominant_group_events >= 0.7 * len(events_for_classification) if dominant_group else False,
             
-            # ENHANCED: Single significant group dominates
+            # Criterion 8: Single significant group dominates
             len(significant_groups) == 1 and significant_groups[0]['high_het_count'] > 0 if significant_groups else False,
             
-            # ENHANCED: Few outliers compared to dominant group
+            # Criterion 9: Few outliers compared to dominant group
             outlier_events <= dominant_group_events if dominant_group else False,
             
-            # Criterion 7: Tight spatial clustering + high heteroplasmy = single underlying event
+            # Criterion 10: Tight spatial clustering + high heteroplasmy = single underlying event
             tight_clustering and len(high_het_events) >= 1,
             
-            # Criterion 8: Loose clustering with few significant events = single
+            # Criterion 11: Loose clustering with few significant events = single
             loose_clustering and significant_del_count + significant_dup_count <= MAJOR_EVENT_COUNT_THRESHOLD,
             
-            # Criterion 9: High clustering density suggests same underlying event
+            # Criterion 12: High clustering density suggests same underlying event
             clustering_density > 5.0 and len(high_het_events) >= 1
         ]
         
-        # MULTIPLE EVENT PATTERN criteria (ENHANCED)
+        # MULTIPLE EVENT PATTERN criteria
         multiple_pattern_indicators = [
             # Criterion 1: Many total events (mouse model pattern)
             len(events_for_classification) > TOTAL_EVENT_COUNT_THRESHOLD,
@@ -717,25 +717,25 @@ class MitoPlotter:
             # Criterion 6: Multiple high-heteroplasmy events of different types
             high_het_del_count >= 2 and high_het_dup_count >= 2,
             
-            # ENHANCED: Multiple significant groups (≥3)
+            # Criterion 7: Multiple significant groups (≥3)
             len(significant_groups) >= 3,
             
-            # ENHANCED: Multiple high-heteroplasmy groups (≥2)
+            # Criterion 8: Multiple high-heteroplasmy groups (≥2)
             len(high_het_groups) >= 2,
             
-            # ENHANCED: No dominant group (scattered pattern)
+            # Criterion 9: No dominant group (scattered pattern)
             not dominant_group or dominant_group_events < 0.5 * len(events_for_classification),
             
-            # ENHANCED: Many outliers vs grouped events
+            # Criterion 10: Many outliers vs grouped events
             outlier_events > dominant_group_events if dominant_group else len(events_for_classification) > 10,
             
-            # Criterion 7: Scattered spatial pattern suggests multiple independent events
+            # Criterion 11: Scattered spatial pattern suggests multiple independent events
             scattered_pattern and len(events_for_classification) > 5,
             
-            # Criterion 8: Wide spatial distribution with multiple significant events
+            # Criterion 12: Wide spatial distribution with multiple significant events
             bp_range > LOOSE_CLUSTER_THRESHOLD and significant_del_count + significant_dup_count > 5,
             
-            # Criterion 9: Low clustering density with many events = multiple mechanisms
+            # Criterion 13: Low clustering density with many events = multiple mechanisms
             clustering_density < 2.0 and len(events_for_classification) > 15
         ]
         
@@ -769,7 +769,8 @@ class MitoPlotter:
                         
                 if outlier_events > 0:
                     reasons.append(f"{outlier_events} outlier events (likely artifacts)")
-                        
+
+            # TODO: take care of these hardcoded variables            
             if clustering_density > 10.0:
                 reasons.append(f"high clustering density ({clustering_density:.1f} events/kb)")
             elif clustering_density > 5.0:
@@ -842,7 +843,7 @@ class MitoPlotter:
             'high_het_del_count': high_het_del_count,
             'high_het_dup_count': high_het_dup_count,
             
-            # Spatial grouping analysis metrics (ENHANCED)
+            # Spatial grouping analysis metrics
             'total_groups': len(group_analysis),
             'significant_groups': len(significant_groups),
             'high_het_groups': len(high_het_groups),
@@ -851,7 +852,7 @@ class MitoPlotter:
             'outlier_events': outlier_events,
             'group_analysis': group_analysis,
             
-            # Spatial clustering metrics (legacy)
+            # Spatial clustering metrics
             'breakpoint_range': bp_range,
             'breakpoint_std': bp_std,
             'tight_clustering': tight_clustering,
@@ -1200,7 +1201,7 @@ class MitoPlotter:
         ax.set_theta_zero_location('N')
         ax.set_theta_direction(-1)
         
-        # Draw genome circle (use dynamic radius instead of hardcoded 390)
+        # Draw genome circle (use dynamic radius instead of hardcoded)
         circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
                             color='gray', transform=ax.transData._b)
         ax.add_patch(circle)
@@ -1346,7 +1347,7 @@ class MitoPlotter:
                 bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.9, edgecolor='gray'),
                 verticalalignment='top')
         
-        # 2. SEPARATE GRADIENT LEGENDS - independently scaled
+        # 2. SEPARATE GRADIENT LEGENDS - independently scaled for visibility
         legend_x = 0.05
         legend_y = 0.4
         legend_height = 0.25
@@ -1564,7 +1565,7 @@ class MitoPlotter:
         plt.close()
         
         print(f"Plot saved to {output_file}")
-        print(f"Plotted {len(dat_processed)} events with pure color gradients in separate legend areas")
+        print(f"Plotted {len(dat_processed)} events")
 
     def save_results(self, events, output_file, genome_fasta=None, blacklist_regions=None):
         """Save processed results following R script logic exactly"""
@@ -1693,7 +1694,7 @@ class MitoPlotter:
         """Save analysis summary with biologically meaningful metrics based on MitoSAlt literature"""
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         
-        # Classify event pattern using literature-based approach (excluding blacklist events)
+        # Classify event pattern  (excluding blacklist events)
         if len(events) > 0:
             classification, reason, criteria, events_with_groups = self._classify_event_pattern(events, blacklist_regions)
         else:
@@ -1748,7 +1749,7 @@ class MitoPlotter:
                 f.write(f"Events used for classification: {criteria.get('total_events', 0)} (of {criteria.get('total_raw_events', 0)} total)\n")
             f.write("\n")
             
-            # Spatial groups analysis (NEW SECTION)
+            # Spatial groups analysis
             f.write("Spatial Groups Analysis:\n")
             f.write("-" * 25 + "\n")
             if 'group_analysis' in criteria and criteria['group_analysis']:
