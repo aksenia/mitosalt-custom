@@ -9,7 +9,7 @@ Build Docker image
 docker build -t mitosalt .
 ```
 
-Build Singularity image  if needed
+Build Singularity image if needed
 
 ```bash
 singularity build mitosalt.sif docker-daemon://mitosalt:latest
@@ -22,11 +22,12 @@ A Python port of the original MitoSAlt R plotting and classification script, wit
 
 This tool ports the original MitoSAlt `delplot.R` script from R to Python, processing MitoSAlt pipeline output to:
 - Classify mitochondrial DNA events as deletions or duplications (original R logic)
-- Generate circular genome visualizations (original R plotting)
+- Generate circular genome visualizations (original R plotting logic)
 - Produce detailed analysis reports (original R output)
 - **Enhanced**: classify overall patterns as single vs multiple events using literature-based criteria
+- **Enhanced**: perform basic clustering to aid in classification and visual discrimination
 
-The core deletion/duplication classification and visualization logic follows the original R implementation exactly. The additional pattern classification distinguishes between patient-like single high-heteroplasmy events and mouse model-like multiple low-heteroplasmy patterns based on [Basu et al. PLoS Genetics 2020](https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1009242).
+The core deletion/duplication classification and visualization logic follows the original R implementation exactly. The additional pattern classification distinguishes between patient-like single high-heteroplasmy events and mouse model-like multiple low-heteroplasmy patterns based on the literature. Please cite [Basu et al. PLoS Genetics 2020](https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1009242) if you are running full or partial MitoSAlt pipeline.
 
 ## Input files (from MitoSAlt pipeline)
 
@@ -50,7 +51,7 @@ The core deletion/duplication classification and visualization logic follows the
 
 4. **Blacklist file** (`.bed` format)
    - Regions to exclude from analysis (e.g., known artifacts, repetitive sequences)
-   - Format: chromosome, start, end positions
+   - Format: chromosome, start, end positions and name
 
 ## Key parameters
 
@@ -97,7 +98,7 @@ classification, reason, criteria = self._classify_event_pattern(events)
 
 ### 4. Visualization generation
 ```python
-# Create circular genome plot (R script plotting logic)
+# Create circular genome plot (enhanced R script plotting logic)
 plotter.create_plot(events, plot_file, blacklist_file=blacklist_file)
 ```
 - **Circular representation** of mitochondrial genome (matches R output)
@@ -107,7 +108,7 @@ plotter.create_plot(events, plot_file, blacklist_file=blacklist_file)
 
 ### 5. Output generation
 ```python
-# Generate detailed results (R script output format)
+# Generate detailed results (R script output format + clustering and blacklist-crossing labels)
 plotter.save_results(events, results_file, genome_fasta, blacklist_file)
 
 # Generate summary report (enhanced Python addition)
@@ -125,7 +126,6 @@ plotter.save_summary(events, summary_file, analysis_stats)
 ### 2. Detailed results (`.tsv`)
 - Tab-separated file with comprehensive event information (R script format)
 - Columns include: coordinates, heteroplasmy, event type, flanking sequences
-- Ready for downstream analysis and statistical processing
 
 ### 3. Analysis summary (`.txt`) - **Enhanced**
 - Human-readable analysis report with literature-based pattern classification
@@ -137,15 +137,15 @@ plotter.save_summary(events, summary_file, analysis_stats)
 
 ```bash
 python mitosalt_visualizer.py \
-    16569 \                    # genome length
-    16024 191 \               # OriH coordinates  
-    5734 5759 \               # OriL coordinates
+    16569 \                   # genome length
+    16081 407 \               # OriH coordinates  
+    5730 5763 \               # OriL coordinate
     10000 \                   # size limit
     sample.cluster \          # cluster file
     sample.breakpoint \       # breakpoint file  
     sample_output \           # output prefix
     0.01 \                    # heteroplasmy threshold
-    reference.fasta \         # genome fasta
+    reference.fasta \         # MT genome fasta
     15 \                      # flanking sequence size
     --blacklist regions.bed \ # optional blacklist
     --output-dir results/     # output directory
@@ -174,10 +174,5 @@ argparse
 - Literature-based pattern classification (single vs multiple events)
 - Enhanced summary reports with biological interpretation
 - Improved error handling and edge case management
-- Modern Python data processing with pandas
-
-### Implementation improvements
+- Additional clustering of the called events 
 - Blacklist region visualization
-- Gradient color mapping for heteroplasmy levels
-- Robust coordinate system handling
-- Better memory management for large datasets
