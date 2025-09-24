@@ -35,7 +35,11 @@ singularity exec --no-home \
 	--env HOME=/tmp_home,TMPDIR=/tmp \
 	--pwd /output \
 	mitosalt.sif  bash -c "cd /output && mkdir -p bam bin bw indel log plot tab \
-			&& perl /opt/MitoSAlt_1.1.1/MitoSAlt1.1.1.pl /opt/MitoSAlt_1.1.1/config_human.txt /data/${R1} /data/${R2} ${sample}"
+			&& perl /opt/MitoSAlt_1.1.1/MitoSAlt1.1.1.pl \
+				/opt/MitoSAlt_1.1.1/config_human.txt \
+				/data/${R1} \
+				/data/${R2} \
+				${sample}"
 ```
 
 or run the classifier and visualisation script separately on the outputs of MitoSAlt main pipeline (before the delplot.R script): 
@@ -59,7 +63,8 @@ singularity exec --no-home \
 	--bind $(pwd)/genome:/output/genome \
 	--bind $(pwd)/output/${sample}:/output \
 	--bind $(pwd)/output/${sample}:/tmp \
-	mitosalt.sif bash -c "python /opt/MitoSAlt_1.1.1/mitosalt_visualizer.py ${msize} ${orihs} ${orihe} ${orils} ${orile} ${sizelimit} \
+	mitosalt.sif bash -c "python /opt/MitoSAlt_1.1.1/mitosalt_visualizer.py \
+			${msize} ${orihs} ${orihe} ${orils} ${orile} ${sizelimit} \
 			/output/indel/${sample}.cluster /output/indel/${sample}.breakpoint \
 			${sample} ${hplimit} /output/genome/${MT_fasta} ${flank} \
 			--blacklist /output/genome/mt_blacklist.bed --output-dir /output"
