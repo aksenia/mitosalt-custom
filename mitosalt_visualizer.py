@@ -14,6 +14,7 @@ from pathlib import Path
 from Bio import SeqIO
 from saltshaker.config import ClassificationConfig
 from saltshaker.event_caller import EventCaller
+from saltshaker.spatial import SpatialGroupAnalyzer
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -34,209 +35,6 @@ class MitoPlotter:
             'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
         self.dup_cmap = LinearSegmentedColormap.from_list(
             'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
-
-    def _perform_spatial_grouping(self, events_df, radius=None, high_het_threshold=None, sig_het_threshold=None, min_group_size=None):
-        """
-        Perform spatial grouping of events within radius distance, separating by event type
-        Returns grouping results with group IDs assigned to events
-        """
-        # Use config defaults if not provided
-        cfg = self.config
-        if radius is None:
-            radius = cfg.CLUSTER_RADIUS
-        if high_het_threshold is None:
-            high_het_threshold = cfg.HIGH_HETEROPLASMY_THRESHOLD
-        if sig_het_threshold is None:
-            sig_het_threshold = cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD
-        if min_group_size is None:
-            min_group_size = cfg.MIN_CLUSTER_SIZE
-        
-        if len(events_df) == 0:
-            return self._empty_grouping_result(events_df)
-
-        # Separate by event type first to avoid mixed groups
-        del_events = events_df[events_df['final.event'] == 'del'].copy()
-        dup_events = events_df[events_df['final.event'] == 'dup'].copy()
-        
-        # Group each type separately
-        del_groups = self._group_events_by_type(del_events, radius, 'del') if len(del_events) > 0 else []
-        dup_groups = self._group_events_by_type(dup_events, radius, 'dup') if len(dup_events) > 0 else []
-        
-        # Combine and assign global group IDs
-        all_groups = del_groups + dup_groups
-        
-        # Sort by median size (largest first) for outside-to-inside plotting
-        all_groups.sort(key=lambda x: x['median_size'], reverse=True)
-
-        for i, group in enumerate(all_groups):
-            group['id'] = i
-            group['group_id'] = f'G{i+1}'
-
-        return self._build_grouping_results(all_groups, events_df, significant_groups=all_groups, 
-                                        high_het_groups=[g for g in all_groups if g['high_het_count'] > 0],
-                                        high_het_threshold=high_het_threshold, sig_het_threshold=sig_het_threshold)
-
-    def _circular_distance(self, pos1, pos2):
-        """Calculate minimum distance on circular genome"""
-        direct = abs(pos1 - pos2)
-        wraparound = self.genome_length - direct
-        return min(direct, wraparound)
-
-    def _events_are_close(self, event1, event2, radius):
-        """Check if two events are within grouping radius using circular distance"""
-        # Check multiple distance metrics
-        start_dist = self._circular_distance(event1['start'], event2['start'])
-        end_dist = self._circular_distance(event1['end'], event2['end'])
-        center_dist = self._circular_distance(event1['center'], event2['center'])
-        
-        # Events are close if any breakpoint is within radius
-        return min(start_dist, end_dist, center_dist) <= radius
-
-    def _event_to_dict(self, event_row, idx):
-        """Convert event row to dictionary format for grouping"""
-        return {
-            'idx': idx,
-            'start': event_row['del.start.median'],
-            'end': event_row['del.end.median'],
-            'center': (event_row['del.start.median'] + event_row['del.end.median']) / 2,
-            'heteroplasmy': event_row['perc'],
-            'event_type': event_row['final.event'],
-            'size': event_row['delsize']
-        }
-
-    def _group_events_by_type(self, events, radius, event_type):
-        """Group events of same type using improved circular distance"""
-        if len(events) == 0:
-            return []
-        
-        groups = []
-        used_indices = set()
-        
-        # Sort by heteroplasmy (highest first) to prioritize dominant events
-        events_sorted = events.sort_values('perc', ascending=False).reset_index()
-        
-        for idx, (_, event) in enumerate(events_sorted.iterrows()):
-            orig_idx = event['index']  # Original index before sorting
-            if orig_idx in used_indices:
-                continue
-                
-            # Start new group with this event
-            group = [self._event_to_dict(event, orig_idx)]
-            used_indices.add(orig_idx)
-            
-            # Find events close to this seed event (single-linkage clustering)
-            for jdx, (_, other_event) in enumerate(events_sorted.iterrows()):
-                orig_jdx = other_event['index']
-                if orig_jdx in used_indices:
-                    continue
-                    
-                other_dict = self._event_to_dict(other_event, orig_jdx)
-                
-                # Check if close to the seed event (not all members - allows elongated groups)
-                if self._events_are_close(group[0], other_dict, radius):
-                    group.append(other_dict)
-                    used_indices.add(orig_jdx)
-            
-            # Create group info
-            if len(group) >= 1:  # Keep all groups including single events
-                groups.append(self._build_group_info(group, event_type))
-        
-        return groups
-
-    def _build_group_info(self, group, event_type):
-        """Build group information dictionary"""
-        # Use config for thresholds
-        cfg = self.config
-        HIGH_HETEROPLASMY_THRESHOLD = cfg.HIGH_HETEROPLASMY_THRESHOLD
-        LOW_HETEROPLASMY_THRESHOLD = cfg.LOW_HETEROPLASMY_THRESHOLD
-        SIGNIFICANT_HETEROPLASMY_THRESHOLD = cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD
-        
-        heteroplasmy_values = [e['heteroplasmy'] for e in group]
-        sizes = [e['end'] - e['start'] for e in group]  # Use actual genomic spans
-        positions = []
-        for e in group:
-            positions.extend([e['start'], e['end']])
-        
-        group_info = {
-            'id': 0,  # Will be assigned later
-            'group_id': 'G1',  # Will be assigned later
-            'event_count': len(group),
-            'event_type': event_type,
-            'max_heteroplasmy': max(heteroplasmy_values),
-            'mean_heteroplasmy': np.mean(heteroplasmy_values),
-            'total_heteroplasmy': sum(heteroplasmy_values),
-            'median_size': np.median(sizes),  
-            'max_size': max(sizes),          
-            'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
-            'high_het_count': sum(1 for h in heteroplasmy_values if h >= HIGH_HETEROPLASMY_THRESHOLD),
-            'significant_count': sum(1 for h in heteroplasmy_values if h >= SIGNIFICANT_HETEROPLASMY_THRESHOLD),
-            'events': group
-        }
-        
-        # Calculate dominance score (heteroplasmy × event count)
-        group_info['dominance_score'] = group_info['max_heteroplasmy'] * group_info['event_count']
-        
-        # Find representative event (highest heteroplasmy)
-        representative = max(group, key=lambda x: x['heteroplasmy'])
-        group_info['representative'] = {
-            'heteroplasmy': representative['heteroplasmy'],
-            'event_type': representative['event_type'],
-            'start': representative['start'],
-            'end': representative['end'],
-            'size': representative['size']
-        }
-        
-        return group_info
-
-    def _build_grouping_results(self, all_groups, events_df, significant_groups, high_het_groups, high_het_threshold, sig_het_threshold):
-        """Build final grouping results"""
-        dominant_group = all_groups[0] if all_groups else None
-        dominant_group_events = dominant_group['event_count'] if dominant_group else 0
-        dominant_group_range = dominant_group['spatial_range'] if dominant_group else 0
-        
-        # Count outlier events (events not in significant groups)
-        events_in_significant_groups = sum(g['event_count'] for g in significant_groups)
-        outlier_events = len(events_df) - events_in_significant_groups
-        
-        # Assign group IDs to events dataframe
-        events_with_groups = events_df.copy()
-        events_with_groups['group'] = 'G1'  # Default for single events
-        
-        if len(all_groups) > 0:
-            # Create mapping from event index to group ID
-            idx_to_group = {}
-            for group_info in all_groups:
-                for event in group_info['events']:
-                    idx_to_group[event['idx']] = group_info['group_id']
-            
-            # Assign group IDs to events
-            for idx, row in events_with_groups.iterrows():
-                if idx in idx_to_group:
-                    events_with_groups.loc[idx, 'group'] = idx_to_group[idx]
-        
-        return {
-            'group_analysis': all_groups,
-            'significant_groups': significant_groups,
-            'high_het_groups': high_het_groups,
-            'dominant_group': dominant_group,
-            'dominant_group_events': dominant_group_events,
-            'dominant_group_range': dominant_group_range,
-            'outlier_events': outlier_events,
-            'events_with_groups': events_with_groups
-        }
-
-    def _empty_grouping_result(self, events_df):
-        """Return empty grouping result"""
-        return {
-            'group_analysis': [],
-            'significant_groups': [],
-            'high_het_groups': [],
-            'dominant_group': None,
-            'dominant_group_events': 0,
-            'dominant_group_range': 0,
-            'outlier_events': 0,
-            'events_with_groups': events_df.copy()
-        }
     
     def _load_blacklist_regions(self, blacklist_file):
         """Robustly load blacklist regions from file, returns list of dicts"""
@@ -394,8 +192,16 @@ class MitoPlotter:
         high_het_dup_count = high_het_dups.sum()
         
         # Perform spatial grouping analysis (separate from classification)
-        grouping_results = self._perform_spatial_grouping(events_for_classification, CLUSTER_RADIUS, HIGH_HETEROPLASMY_THRESHOLD, SIGNIFICANT_HETEROPLASMY_THRESHOLD, MIN_CLUSTER_SIZE)
-        
+ #       grouping_results = self._perform_spatial_grouping(events_for_classification, CLUSTER_RADIUS, HIGH_HETEROPLASMY_THRESHOLD, SIGNIFICANT_HETEROPLASMY_THRESHOLD, MIN_CLUSTER_SIZE)       
+        spatial_analyzer = SpatialGroupAnalyzer(self.genome_length, self.config)
+        grouping_results = spatial_analyzer.group_events(
+            events_for_classification, 
+            CLUSTER_RADIUS, 
+            HIGH_HETEROPLASMY_THRESHOLD,
+            SIGNIFICANT_HETEROPLASMY_THRESHOLD,
+            MIN_CLUSTER_SIZE
+)
+
         # Extract grouping metrics for classification
         group_analysis = grouping_results['group_analysis']
         significant_groups = grouping_results['significant_groups']
