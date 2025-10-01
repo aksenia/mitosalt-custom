@@ -12,18 +12,21 @@ from matplotlib.colors import LinearSegmentedColormap
 import argparse
 from pathlib import Path
 from Bio import SeqIO
+from saltshaker.config import ClassificationConfig
+
 import warnings
 warnings.filterwarnings('ignore')
 
 class MitoPlotter:
     def __init__(self, genome_length, ori_h_start, ori_h_end, ori_l_start, ori_l_end, 
-                 heteroplasmy_limit=0.01, flank_size=15):
+                 heteroplasmy_limit=0.01, flank_size=15, config=None):
         """Initialize MitoPlotter with mitochondrial genome parameters"""
         self.genome_length = genome_length
         self.ori_h = (ori_h_start, ori_h_end)
         self.ori_l = (ori_l_start, ori_l_end)
         self.heteroplasmy_limit = heteroplasmy_limit
         self.flank_size = flank_size
+        self.config = config or ClassificationConfig()
         
         # Create color maps for deletions (blues) and duplications (reds)
         self.del_cmap = LinearSegmentedColormap.from_list(
@@ -238,11 +241,22 @@ class MitoPlotter:
         
         return clusters
 
-    def _perform_spatial_grouping(self, events_df, radius=1000, high_het_threshold=0.30, sig_het_threshold=0.05, min_group_size=2):  # Increased radius
+    def _perform_spatial_grouping(self, events_df, radius=None, high_het_threshold=None, sig_het_threshold=None, min_group_size=None):
         """
         Perform spatial grouping of events within radius distance, separating by event type
         Returns grouping results with group IDs assigned to events
         """
+        # Use config defaults if not provided
+        cfg = self.config
+        if radius is None:
+            radius = cfg.CLUSTER_RADIUS
+        if high_het_threshold is None:
+            high_het_threshold = cfg.HIGH_HETEROPLASMY_THRESHOLD
+        if sig_het_threshold is None:
+            sig_het_threshold = cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD
+        if min_group_size is None:
+            min_group_size = cfg.MIN_CLUSTER_SIZE
+        
         if len(events_df) == 0:
             return self._empty_grouping_result(events_df)
 
@@ -263,7 +277,7 @@ class MitoPlotter:
         for i, group in enumerate(all_groups):
             group['id'] = i
             group['group_id'] = f'G{i+1}'
-    
+
         return self._build_grouping_results(all_groups, events_df, significant_groups=all_groups, 
                                         high_het_groups=[g for g in all_groups if g['high_het_count'] > 0],
                                         high_het_threshold=high_het_threshold, sig_het_threshold=sig_het_threshold)
@@ -337,11 +351,12 @@ class MitoPlotter:
 
     def _build_group_info(self, group, event_type):
         """Build group information dictionary"""
-        # Thresholds as same in classify events - to be made as global variables
-        HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
-        LOW_HETEROPLASMY_THRESHOLD = 1.0    # 1% - potential artifacts/minor events
-        SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
-
+        # Use config for thresholds
+        cfg = self.config
+        HIGH_HETEROPLASMY_THRESHOLD = cfg.HIGH_HETEROPLASMY_THRESHOLD
+        LOW_HETEROPLASMY_THRESHOLD = cfg.LOW_HETEROPLASMY_THRESHOLD
+        SIGNIFICANT_HETEROPLASMY_THRESHOLD = cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD
+        
         heteroplasmy_values = [e['heteroplasmy'] for e in group]
         sizes = [e['end'] - e['start'] for e in group]  # Use actual genomic spans
         positions = []
@@ -359,7 +374,7 @@ class MitoPlotter:
             'median_size': np.median(sizes),  
             'max_size': max(sizes),          
             'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
-            'high_het_count': sum(1 for h in heteroplasmy_values if h >=  HIGH_HETEROPLASMY_THRESHOLD),
+            'high_het_count': sum(1 for h in heteroplasmy_values if h >= HIGH_HETEROPLASMY_THRESHOLD),
             'significant_count': sum(1 for h in heteroplasmy_values if h >= SIGNIFICANT_HETEROPLASMY_THRESHOLD),
             'events': group
         }
@@ -509,31 +524,56 @@ class MitoPlotter:
         # Filter out blacklist-crossing events for classification
         if blacklist_regions:
             print(f"DEBUG: Classification - checking {len(events)} events against {len(blacklist_regions)} blacklist regions")
-
-            # Filter to non-blacklist events for classification
             clean_events = events[~events.apply(lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)]
-
             if len(clean_events) == 0:
                 return "Unknown", "All events cross blacklisted regions", {}, events.copy()
-            
-            # Use clean events for classification
             events_for_classification = clean_events
             blacklist_filtered_count = len(events) - len(clean_events)
         else:
-            # No blacklist regions provided
             events_for_classification = events
             blacklist_filtered_count = 0
         
-        # Key biological thresholds based on literature - to be made global variables
-        HIGH_HETEROPLASMY_THRESHOLD = 30.0  # 30% - major pathogenic events
-        LOW_HETEROPLASMY_THRESHOLD = 1.0   # 1% - potential artifacts/minor events
-        SIGNIFICANT_HETEROPLASMY_THRESHOLD = 1.5  # 5% - only count events above this for type classification
-        MAJOR_EVENT_COUNT_THRESHOLD = 3     # Few major events = single pattern
-        TOTAL_EVENT_COUNT_THRESHOLD = 20    # Many events = multiple pattern
+        # ============================================================
+        # LOAD ALL CONFIG CONSTANTS
+        # ============================================================
+        cfg = self.config
         
-        # Clustering parameters
-        CLUSTER_RADIUS = 400  # bp - events within 400bp form a cluster
-        MIN_CLUSTER_SIZE = 2  # minimum events to be considered a significant cluster
+        # Heteroplasmy thresholds
+        HIGH_HETEROPLASMY_THRESHOLD = cfg.HIGH_HETEROPLASMY_THRESHOLD
+        LOW_HETEROPLASMY_THRESHOLD = cfg.LOW_HETEROPLASMY_THRESHOLD
+        SIGNIFICANT_HETEROPLASMY_THRESHOLD = cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD
+        
+        # Event count thresholds
+        MAJOR_EVENT_COUNT_THRESHOLD = cfg.MAJOR_EVENT_COUNT_THRESHOLD
+        TOTAL_EVENT_COUNT_THRESHOLD = cfg.TOTAL_EVENT_COUNT_THRESHOLD
+        MIN_EVENTS_NO_DOMINANT = cfg.MIN_EVENTS_NO_DOMINANT
+        MIN_MIXED_TYPE_COUNT = cfg.MIN_MIXED_TYPE_COUNT
+        MIN_MEDIUM_HET_FOR_MULTIPLE = cfg.MIN_MEDIUM_HET_FOR_MULTIPLE
+        MIN_HIGH_HET_BOTH_TYPES = cfg.MIN_HIGH_HET_BOTH_TYPES
+        MIN_SCATTERED_EVENTS = cfg.MIN_SCATTERED_EVENTS
+        MIN_WIDE_SIGNIFICANT = cfg.MIN_WIDE_SIGNIFICANT
+        MIN_LOW_DENSITY_EVENTS = cfg.MIN_LOW_DENSITY_EVENTS
+        
+        # Spatial thresholds
+        CLUSTER_RADIUS = cfg.CLUSTER_RADIUS
+        MIN_CLUSTER_SIZE = cfg.MIN_CLUSTER_SIZE
+        TIGHT_CLUSTER_THRESHOLD = cfg.TIGHT_CLUSTER_THRESHOLD
+        LOOSE_CLUSTER_THRESHOLD = cfg.LOOSE_CLUSTER_THRESHOLD
+        SCATTERED_THRESHOLD = cfg.SCATTERED_THRESHOLD
+        
+        # Group thresholds
+        DOMINANT_GROUP_THRESHOLD = cfg.DOMINANT_GROUP_THRESHOLD
+        NO_DOMINANT_THRESHOLD = cfg.NO_DOMINANT_THRESHOLD
+        
+        # Density thresholds
+        HIGH_CLUSTERING_DENSITY = cfg.HIGH_CLUSTERING_DENSITY
+        LOW_CLUSTERING_DENSITY = cfg.LOW_CLUSTERING_DENSITY
+        MIN_GROUPS_FOR_MULTIPLE = cfg.MIN_GROUPS_FOR_MULTIPLE
+        MIN_HIGH_HET_GROUPS = cfg.MIN_HIGH_HET_GROUPS
+        
+        # ============================================================
+        # CLASSIFICATION LOGIC STARTS HERE
+        # ============================================================
         
         # Heteroplasmy-based classification (using clean events only)
         high_het_events = events_for_classification[events_for_classification['perc'] >= HIGH_HETEROPLASMY_THRESHOLD]
@@ -588,10 +628,6 @@ class MitoPlotter:
             position_range = 0
         
         # Enhanced spatial clustering analysis
-        TIGHT_CLUSTER_THRESHOLD = 100   # bp - breakpoints within 100bp = tight cluster (single event)
-        LOOSE_CLUSTER_THRESHOLD = 1000  # bp - breakpoints within 1kb = loose cluster
-        SCATTERED_THRESHOLD = 3000      # bp - breakpoints >3kb apart = scattered (multiple events)
-        
         if len(breakpoint_positions) > 0:
             bp_array = np.array(breakpoint_positions)
             bp_range = np.max(bp_array) - np.min(bp_array) if len(bp_array) > 1 else 0
@@ -624,8 +660,8 @@ class MitoPlotter:
         # Calculate values needed for both criteria and reasoning (BEFORE using them anywhere)
         max_heteroplasmy = events_for_classification['perc'].max() if len(events_for_classification) > 0 else 0
         median_heteroplasmy = events_for_classification['perc'].median() if len(events_for_classification) > 0 else 0
-        mixed_types_significant = significant_del_count > 0 and significant_dup_count > 0 and min(significant_del_count, significant_dup_count) >= 3
-        mixed_types_all = del_count > 0 and dup_count > 0 and min(del_count, dup_count) >= 3
+        mixed_types_significant = significant_del_count > 0 and significant_dup_count > 0 and min(significant_del_count, significant_dup_count) >= MIN_MIXED_TYPE_COUNT
+        mixed_types_all = del_count > 0 and dup_count > 0 and min(del_count, dup_count) >= MIN_MIXED_TYPE_COUNT
         many_events = len(events_for_classification) > TOTAL_EVENT_COUNT_THRESHOLD
         
         # PRE-CLASSIFICATION: Check for no significant events
@@ -653,7 +689,7 @@ class MitoPlotter:
             # For no-event cases, just return events as-is (no grouping needed)
             events_with_groups = events_for_classification.copy() if len(events_for_classification) > 0 else events.copy()
             if len(events_with_groups) > 0 and 'group' not in events_with_groups.columns:
-                events_with_groups['group'] = 'G1'  # Default group for any remaining events
+                events_with_groups['group'] = 'G1'
             
             return classification, reason_str, criteria, events_with_groups
 
@@ -679,7 +715,7 @@ class MitoPlotter:
             (significant_del_count >= 1 and significant_dup_count == 0) or (significant_dup_count >= 1 and significant_del_count == 0),
             
             # Criterion 7: Dominant group with most events (≥70% in main group)
-            dominant_group_events >= 0.7 * len(events_for_classification) if dominant_group else False,
+            dominant_group_events >= DOMINANT_GROUP_THRESHOLD * len(events_for_classification) if dominant_group else False,
             
             # Criterion 8: Single significant group dominates
             len(significant_groups) == 1 and significant_groups[0]['high_het_count'] > 0 if significant_groups else False,
@@ -694,7 +730,7 @@ class MitoPlotter:
             loose_clustering and significant_del_count + significant_dup_count <= MAJOR_EVENT_COUNT_THRESHOLD,
             
             # Criterion 12: High clustering density suggests same underlying event
-            clustering_density > 5.0 and len(high_het_events) >= 1
+            clustering_density > HIGH_CLUSTERING_DENSITY and len(high_het_events) >= 1
         ]
         
         # MULTIPLE EVENT PATTERN criteria
@@ -703,46 +739,46 @@ class MitoPlotter:
             len(events_for_classification) > TOTAL_EVENT_COUNT_THRESHOLD,
             
             # Criterion 2: Many events but no high-heteroplasmy dominant event
-            len(events_for_classification) > 10 and len(high_het_events) == 0,
+            len(events_for_classification) > MIN_EVENTS_NO_DOMINANT and len(high_het_events) == 0,
             
             # Criterion 3: Mixed SIGNIFICANT deletion/duplication pattern
-            mixed_types_significant and len(events_for_classification) > 10,
+            mixed_types_significant and len(events_for_classification) > MIN_EVENTS_NO_DOMINANT,
             
             # Criterion 4: High complexity - many medium heteroplasmy events
-            len(medium_het_events) > 10 and median_heteroplasmy < HIGH_HETEROPLASMY_THRESHOLD,
+            len(medium_het_events) > MIN_MEDIUM_HET_FOR_MULTIPLE and median_heteroplasmy < HIGH_HETEROPLASMY_THRESHOLD,
             
             # Criterion 5: Very high significant event count suggests multiple mechanisms
-            significant_del_count + significant_dup_count > 20,
+            significant_del_count + significant_dup_count > TOTAL_EVENT_COUNT_THRESHOLD,
             
             # Criterion 6: Multiple high-heteroplasmy events of different types
-            high_het_del_count >= 2 and high_het_dup_count >= 2,
+            high_het_del_count >= MIN_HIGH_HET_BOTH_TYPES and high_het_dup_count >= MIN_HIGH_HET_BOTH_TYPES,
             
             # Criterion 7: Multiple significant groups (≥3)
-            len(significant_groups) >= 3,
+            len(significant_groups) >= MIN_GROUPS_FOR_MULTIPLE,
             
             # Criterion 8: Multiple high-heteroplasmy groups (≥2)
-            len(high_het_groups) >= 2,
+            len(high_het_groups) >= MIN_HIGH_HET_GROUPS,
             
             # Criterion 9: No dominant group (scattered pattern)
-            not dominant_group or dominant_group_events < 0.5 * len(events_for_classification),
+            not dominant_group or dominant_group_events < NO_DOMINANT_THRESHOLD * len(events_for_classification),
             
             # Criterion 10: Many outliers vs grouped events
-            outlier_events > dominant_group_events if dominant_group else len(events_for_classification) > 10,
+            outlier_events > dominant_group_events if dominant_group else len(events_for_classification) > MIN_EVENTS_NO_DOMINANT,
             
             # Criterion 11: Scattered spatial pattern suggests multiple independent events
-            scattered_pattern and len(events_for_classification) > 5,
+            scattered_pattern and len(events_for_classification) > MIN_SCATTERED_EVENTS,
             
             # Criterion 12: Wide spatial distribution with multiple significant events
-            bp_range > LOOSE_CLUSTER_THRESHOLD and significant_del_count + significant_dup_count > 5,
+            bp_range > LOOSE_CLUSTER_THRESHOLD and significant_del_count + significant_dup_count > MIN_WIDE_SIGNIFICANT,
             
             # Criterion 13: Low clustering density with many events = multiple mechanisms
-            clustering_density < 2.0 and len(events_for_classification) > 15
+            clustering_density < LOW_CLUSTERING_DENSITY and len(events_for_classification) > MIN_LOW_DENSITY_EVENTS
         ]
         
         # Classification decision
         single_score = sum(single_pattern_indicators)
         multiple_score = sum(multiple_pattern_indicators)
-        
+
         if single_score > multiple_score:
             classification = "Single"
             
@@ -763,21 +799,15 @@ class MitoPlotter:
                 # Only report spatial range for multiple events
                 if dominant_group_events > 1:
                     if dominant_group_range <= TIGHT_CLUSTER_THRESHOLD:
-                        reasons.append(f"tightly grouped (range: {dominant_group_range:.0f}bp)")
+                        reasons.append(f"tightly grouped (≤{TIGHT_CLUSTER_THRESHOLD}bp: {dominant_group_range:.0f}bp)")
                     elif dominant_group_range <= LOOSE_CLUSTER_THRESHOLD:
-                        reasons.append(f"loosely grouped (range: {dominant_group_range:.0f}bp)")
+                        reasons.append(f"loosely grouped (≤{LOOSE_CLUSTER_THRESHOLD}bp: {dominant_group_range:.0f}bp)")
                         
                 if outlier_events > 0:
                     reasons.append(f"{outlier_events} outlier events (likely artifacts)")
-
-            # TODO: take care of these hardcoded variables            
-            if clustering_density > 10.0:
-                reasons.append(f"high clustering density ({clustering_density:.1f} events/kb)")
-            elif clustering_density > 5.0:
-                reasons.append(f"good clustering density ({clustering_density:.1f} events/kb)")
                     
             if len(low_het_events) > 0:
-                reasons.append(f"{len(low_het_events)} low-level events (<1%)")
+                reasons.append(f"{len(low_het_events)} low-level events (<{LOW_HETEROPLASMY_THRESHOLD:.0f}%)")
             
             reason_str = "; ".join(reasons) if reasons else f"grouped pattern ({len(events_for_classification)} events)"
             
@@ -792,7 +822,7 @@ class MitoPlotter:
                 reasons.append("no dominant high-heteroplasmy events")
             if mixed_types_significant:
                 reasons.append(f"mixed significant types ({significant_del_count} del, {significant_dup_count} dup ≥5%)")
-            if high_het_del_count >= 2 and high_het_dup_count >= 2:
+            if high_het_del_count >= MIN_HIGH_HET_BOTH_TYPES and high_het_dup_count >= MIN_HIGH_HET_BOTH_TYPES:
                 reasons.append(f"multiple high-het types ({high_het_del_count} del, {high_het_dup_count} dup ≥30%)")
                     
             # Add group-based spatial analysis
@@ -801,12 +831,9 @@ class MitoPlotter:
             if len(high_het_groups) > 1:
                 reasons.append(f"{len(high_het_groups)} high-heteroplasmy groups")
             if scattered_pattern and outlier_events > dominant_group_events:
-                reasons.append(f"scattered pattern (outliers > dominant group)")
+                reasons.append(f"scattered pattern (>{SCATTERED_THRESHOLD}bp: outliers > dominant group)")
             elif bp_range > LOOSE_CLUSTER_THRESHOLD:
-                reasons.append(f"wide distribution ({bp_range:.0f}bp span)")
-                    
-            if clustering_density < 2.0 and len(events_for_classification) > 15:
-                reasons.append(f"low clustering density ({clustering_density:.1f} events/kb)")
+                reasons.append(f"wide distribution (>{LOOSE_CLUSTER_THRESHOLD}bp: {bp_range:.0f}bp)")
             
             reason_str = "; ".join(reasons)
             
@@ -818,7 +845,13 @@ class MitoPlotter:
             else:
                 classification = "Multiple" 
                 reason_str = f"ambiguous, multiple low-heteroplasmy events (median {median_heteroplasmy:.2%})"
-        
+
+        # Report clustering density for all patterns (outside the if/elif)
+        if clustering_density > HIGH_CLUSTERING_DENSITY:
+            reason_str += f"; high clustering density ({clustering_density:.1f} events/kb, >{HIGH_CLUSTERING_DENSITY:.0f})"
+        elif clustering_density < LOW_CLUSTERING_DENSITY:
+            reason_str += f"; low clustering density ({clustering_density:.1f} events/kb, <{LOW_CLUSTERING_DENSITY:.0f})"
+
         # Add blacklist filtering information to reason if applicable
         if blacklist_filtered_count > 0:
             reason_str += f" [excluded {blacklist_filtered_count} blacklist-crossing events]"
@@ -1585,6 +1618,9 @@ class MitoPlotter:
         """Save analysis summary with biologically meaningful metrics based on MitoSAlt literature"""
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         
+        # Load config for threshold reporting
+        cfg = self.config
+        
         # Classify event pattern  (excluding blacklist events)
         if len(events) > 0:
             classification, reason, criteria, events_with_groups = self._classify_event_pattern(events, blacklist_regions)
@@ -1654,7 +1690,7 @@ class MitoPlotter:
                         rep = group_info['representative']
                         actual_size = rep['end'] - rep['start']
                         f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
-                            f"max heteroplasmy {rep['heteroplasmy']:.1f} "
+                            f"max heteroplasmy {rep['heteroplasmy']:.1f}% "
                             f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
                 
                 if dup_groups:
@@ -1663,7 +1699,7 @@ class MitoPlotter:
                         rep = group_info['representative']
                         actual_size = rep['end'] - rep['start']
                         f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
-                            f"max heteroplasmy {rep['heteroplasmy']:.1f} "
+                            f"max heteroplasmy {rep['heteroplasmy']:.1f}% "
                             f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
                 
                 if not del_groups and not dup_groups:
@@ -1682,9 +1718,9 @@ class MitoPlotter:
             f.write("Heteroplasmy distribution (literature-based thresholds):\n")
             f.write("-" * 55 + "\n")
             if len(events) > 0:
-                f.write(f"High heteroplasmy events (≥30%): {criteria.get('high_het_count', 0)}\n")
-                f.write(f"Medium heteroplasmy events (1-30%): {criteria.get('medium_het_count', 0)}\n")
-                f.write(f"Low heteroplasmy events (<1%): {criteria.get('low_het_count', 0)}\n")
+                f.write(f"High heteroplasmy events (≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('high_het_count', 0)}\n")
+                f.write(f"Medium heteroplasmy events ({cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}-{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('medium_het_count', 0)}\n")
+                f.write(f"Low heteroplasmy events (<{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('low_het_count', 0)}\n")
                 f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f}%\n")
                 f.write(f"Median heteroplasmy: {criteria.get('median_heteroplasmy', 0):.3f}%\n")
             else:
@@ -1733,23 +1769,23 @@ class MitoPlotter:
                 f.write("Classification Algorithm Details:\n")
                 f.write("-" * 35 + "\n")
                 scores = criteria['classification_scores']
-                f.write(f"Single pattern score: {scores['single_score']} / 13 possible criteria\n")
+                f.write(f"Single pattern score: {scores['single_score']} / 12 possible criteria\n")
                 f.write(f"Multiple pattern score: {scores['multiple_score']} / 13 possible criteria\n")
                 f.write(f"Decision: {'Single' if scores['single_score'] > scores['multiple_score'] else 'Multiple'} pattern (higher score wins)\n")
                 f.write("\n")
                 f.write("Score calculation:\n")
-                f.write("- Each pattern type has 13 biological criteria\n")
+                f.write("- Each pattern type has biological criteria (12 for Single, 13 for Multiple)\n")
                 f.write("- Single pattern criteria: dominant high-het events, few total events, tight clustering, etc.\n")
                 f.write("- Multiple pattern criteria: many events, mixed types, scattered distribution, etc.\n")
                 f.write("- Score = count of criteria met for each pattern type\n")
                 f.write("\n")
                 f.write("Biological thresholds used:\n")
-                f.write(f"- High heteroplasmy threshold: ≥30% (pathogenic significance)\n")
-                f.write(f"- Significance threshold: ≥5% (above noise level)\n")
-                f.write(f"- Low heteroplasmy threshold: <1% (likely artifacts)\n")
-                f.write(f"- Multiple event threshold: >20 events (mouse model pattern)\n")
-                f.write(f"- Major event threshold: ≤3 high-het events (single pattern)\n")
-                f.write(f"- Spatial clustering radius: 500bp (biologically relevant)\n")
+                f.write(f"- High heteroplasmy threshold: ≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% (pathogenic significance)\n")
+                f.write(f"- Significance threshold: ≥{cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD:.0f}% (above noise level)\n")
+                f.write(f"- Low heteroplasmy threshold: <{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}% (likely artifacts)\n")
+                f.write(f"- Multiple event threshold: >{cfg.TOTAL_EVENT_COUNT_THRESHOLD} events (mouse model pattern)\n")
+                f.write(f"- Major event threshold: ≤{cfg.MAJOR_EVENT_COUNT_THRESHOLD} high-het events (single pattern)\n")
+                f.write(f"- Spatial clustering radius: {cfg.CLUSTER_RADIUS}bp (biologically relevant)\n")
                 f.write("\n")
             
             # Biological interpretation
@@ -1760,7 +1796,7 @@ class MitoPlotter:
                 f.write("- Single pathogenic deletion/duplication\n")
                 f.write("- Classical mitochondrial disease patient profile\n")
                 f.write("- Possible accompanying low-level artifacts\n")
-                if criteria.get('max_heteroplasmy', 0) >= 0.30:
+                if criteria.get('max_heteroplasmy', 0) >= cfg.HIGH_HETEROPLASMY_THRESHOLD:
                     f.write("- High heteroplasmy suggests functional impact\n")
             elif classification == "Multiple":
                 f.write("Pattern consistent with:\n")
@@ -1780,7 +1816,7 @@ class MitoPlotter:
             f.write("- Basu et al. PLoS Genet 2020 (MitoSAlt methodology)\n")
             f.write("- Patient samples: single high-heteroplasmy events (>35%)\n")
             f.write("- Mouse models: multiple low-heteroplasmy events (<3%)\n")
-            f.write("- Clinical thresholds: >30% for pathogenic significance\n")
+            f.write(f"- Clinical thresholds: >{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% for pathogenic significance\n")
         
         print(f"Enhanced analysis summary saved to {output_file}")
         print(f"Event classification: {classification} ({reason})")
@@ -1804,6 +1840,8 @@ def main():
     parser.add_argument('flank_size', type=int, help='Flanking sequence size')
     parser.add_argument('--blacklist', help='BED file with regions to exclude', default=None)
     parser.add_argument('--output-dir', help='Output directory (default: current directory)', default='.')
+    parser.add_argument('--output-vcf', action='store_true', 
+                    help='Also output events in VCF format')
     
     args = parser.parse_args()
     
@@ -1862,6 +1900,20 @@ def main():
         print(f"Attempting to save summary to: {summary_file}")
         print(f"Stats available: {len(stats) if stats else 'None'}")
         plotter.save_summary(events_with_groups, str(summary_file), stats, blacklist_regions=blacklist_regions)
+
+        # Add VCF output if requested
+        if args.output_vcf:
+            from saltshaker.io import write_vcf
+            
+            vcf_file = indel_dir / f"{args.output_name}.vcf"
+            write_vcf(
+                events_with_groups,
+                (classification, reason, criteria, events_with_groups),
+                str(vcf_file),
+                reference_name="chrM",
+                sample_name=args.output_name,
+                genome_length=args.genome_length
+            )
     else:
         print("No events to process")
 
