@@ -3,6 +3,7 @@
 from .config import ClassificationConfig
 from .event_caller import EventCaller
 from .spatial import SpatialGroupAnalyzer
+from .classifier import EventClassifier
 
 __version__ = "0.1.0"
-__all__ = ["ClassificationConfig", "EventCaller", "SpatialGroupAnalyzer"]
+__all__ = ["ClassificationConfig", "EventCaller", "SpatialGroupAnalyzer", "EventClassifier"]
