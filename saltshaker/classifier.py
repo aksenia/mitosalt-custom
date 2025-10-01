@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 from .config import ClassificationConfig
 from .spatial import SpatialGroupAnalyzer
+from .utils import crosses_blacklist
 
 
 class EventClassifier:
@@ -32,7 +33,7 @@ class EventClassifier:
         # Filter out blacklist-crossing events for classification
         if blacklist_regions:
             print(f"DEBUG: Classification - checking {len(events)} events against {len(blacklist_regions)} blacklist regions")
-            clean_events = events[~events.apply(lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)]
+            clean_events = events[~events.apply(lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)]
             if len(clean_events) == 0:
                 return "Unknown", "All events cross blacklisted regions", {}, events.copy()
             events_for_classification = clean_events
@@ -445,7 +446,7 @@ class EventClassifier:
         # NOW ADD BLACKLIST EVENTS BACK for visualization
         if blacklist_regions:
             # Find blacklist-crossing events
-            blacklist_events = events[events.apply(lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)].copy()
+            blacklist_events = events[events.apply(lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions), axis=1)].copy()
             
             if len(blacklist_events) > 0:
                 # Add blacklist flag and unique group info for each event
@@ -458,14 +459,3 @@ class EventClassifier:
                 print(f"DEBUG: Added {len(blacklist_events)} blacklist events back for plotting")
 
         return classification, reason_str, criteria, events_with_groups
-    
-    def _crosses_blacklist(self, start_pos, end_pos, blacklist_regions):
-        """Check if event breakpoints cross any blacklisted regions"""
-        if not blacklist_regions:
-            return False
-        
-        for region in blacklist_regions:
-            bl_start, bl_end = int(region['start']), int(region['end'])
-            if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
-                return True
-        return False

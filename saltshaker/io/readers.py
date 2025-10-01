@@ -1,0 +1,75 @@
+"""
+I/O Readers
+
+Handles reading of various input files.
+"""
+
+import pandas as pd
+from pathlib import Path
+
+
+class BlacklistReader:
+    """Reads and parses blacklist BED files"""
+    
+    @staticmethod
+    def load_blacklist_regions(blacklist_file):
+        """
+        Robustly load blacklist regions from BED file
+        
+        Tries multiple parsing strategies to handle various BED formats.
+        
+        Args:
+            blacklist_file: Path to BED file with regions to exclude
+            
+        Returns:
+            List of dicts with 'chr', 'start', 'end' keys
+        """
+        blacklist_regions = []
+        if not blacklist_file or not Path(blacklist_file).exists():
+            return blacklist_regions
+        
+        try:
+            blacklist = None
+            # Try different separators
+            for sep in ['\t', None, ' ', '\\s+']:
+                try:
+                    if sep == '\\s+':
+                        blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
+                    elif sep is None:
+                        blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
+                    else:
+                        blacklist = pd.read_csv(blacklist_file, sep=sep, header=None)
+                    
+                    if blacklist.shape[1] >= 3:
+                        break
+                    else:
+                        blacklist = None
+                except Exception:
+                    continue
+            
+            # Fallback: manual parsing
+            if blacklist is None or blacklist.shape[1] < 3:
+                with open(blacklist_file, 'r') as f:
+                    lines = f.readlines()
+                parsed_lines = []
+                for line in lines:
+                    line = line.strip()
+                    if line:
+                        parts = line.split()
+                        if len(parts) >= 3:
+                            parsed_lines.append([parts[0], parts[1], parts[2]])
+                if parsed_lines:
+                    blacklist = pd.DataFrame(parsed_lines, columns=['chr', 'start', 'end'])
+            
+            if blacklist is not None:
+                blacklist = blacklist.iloc[:, :3].copy()
+                blacklist.columns = ['chr', 'start', 'end']
+                blacklist['start'] = pd.to_numeric(blacklist['start'], errors='coerce')
+                blacklist['end'] = pd.to_numeric(blacklist['end'], errors='coerce')
+                blacklist = blacklist.dropna()
+                blacklist_regions = blacklist.to_dict('records')
+        
+        except Exception as e:
+            print(f"Warning: Could not load blacklist file: {e}")
+        
+        return blacklist_regions

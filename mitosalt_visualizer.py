@@ -16,6 +16,8 @@ from saltshaker.config import ClassificationConfig
 from saltshaker.event_caller import EventCaller
 from saltshaker.spatial import SpatialGroupAnalyzer
 from saltshaker.classifier import EventClassifier
+from saltshaker.io import BlacklistReader, write_tsv, write_summary
+from saltshaker.utils import crosses_blacklist
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -36,71 +38,6 @@ class MitoPlotter:
             'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
         self.dup_cmap = LinearSegmentedColormap.from_list(
             'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
-    
-    def _load_blacklist_regions(self, blacklist_file):
-        """Robustly load blacklist regions from file, returns list of dicts"""
-        blacklist_regions = []
-        if blacklist_file and Path(blacklist_file).exists():
-            try:
-                blacklist = None
-                for sep in ['\t', None, ' ', '\\s+']:
-                    try:
-                        if sep == '\\s+':
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
-                        elif sep is None:
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None, engine='python')
-                        else:
-                            blacklist = pd.read_csv(blacklist_file, sep=sep, header=None)
-                        if blacklist.shape[1] >= 3:
-                            break
-                        else:
-                            blacklist = None
-                    except Exception:
-                        continue
-                if blacklist is None or blacklist.shape[1] < 3:
-                    with open(blacklist_file, 'r') as f:
-                        lines = f.readlines()
-                    parsed_lines = []
-                    for line in lines:
-                        line = line.strip()
-                        if line:
-                            parts = line.split()
-                            if len(parts) >= 3:
-                                parsed_lines.append([parts[0], parts[1], parts[2]])
-                    if parsed_lines:
-                        blacklist = pd.DataFrame(parsed_lines, columns=['chr', 'start', 'end'])
-                if blacklist is not None:
-                    blacklist = blacklist.iloc[:, :3].copy()
-                    blacklist.columns = ['chr', 'start', 'end']
-                    blacklist['start'] = pd.to_numeric(blacklist['start'], errors='coerce')
-                    blacklist['end'] = pd.to_numeric(blacklist['end'], errors='coerce')
-                    blacklist = blacklist.dropna()
-                    blacklist_regions = blacklist.to_dict('records')
-            except Exception as e:
-                print(f"Warning: Could not load blacklist file: {e}")
-        return blacklist_regions
-    
-    def _crosses_blacklist(self, start_pos, end_pos, blacklist_regions):
-        """Check if event breakpoints cross any blacklisted regions"""
-        if not blacklist_regions:
-            return False
-        
-        for region in blacklist_regions:
-            bl_start, bl_end = int(region['start']), int(region['end'])
-            if (bl_start <= start_pos <= bl_end) or (bl_start <= end_pos <= bl_end):
-                return True
-        return False
-    
-    def _filter_blacklist(self, clusters, blacklist_regions):
-        """Filter out events that overlap with blacklisted regions"""
-        mask = ~clusters.apply(
-            lambda row: self._crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
-            axis=1
-        )
-        filtered_count = len(clusters) - mask.sum()
-        if filtered_count > 0:
-            print(f"Filtered out {filtered_count} events overlapping blacklisted regions")
-        return clusters[mask]
     
     def group_sort_key(self, group_id):
         """Convert group ID to sortable tuple (priority, number)"""
@@ -147,7 +84,7 @@ class MitoPlotter:
         dat['blacklist_crossing'] = False
         if blacklist_regions:
             for idx, row in dat.iterrows():
-                dat.loc[idx, 'blacklist_crossing'] = self._crosses_blacklist(row['start'], row['end'], blacklist_regions)
+                dat.loc[idx, 'blacklist_crossing'] = crosses_blacklist(row['start'], row['end'], blacklist_regions)
 
         # Count events
         del_count = (dat['final.event'] == 'del').sum()
@@ -596,318 +533,6 @@ class MitoPlotter:
         print(f"Plot saved to {output_file}")
         print(f"Plotted {len(dat_processed)} events")
 
-    def save_results(self, events, output_file, genome_fasta=None, blacklist_regions=None):
-        """Save processed results following R script logic exactly"""
-        if len(events) == 0:
-            print("No events to save")
-            return
-        
-        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-        
-        res = events.copy()
-        print(f"Starting save_results with {len(res)} events")
-        
-        # Coordinate swapping for OUTPUT only (exactly like R script lines ~360-375)
-        for i in res.index:
-            if res.loc[i, 'dloop'] == 'yes':
-                # Swap coordinates for display
-                del_start_median = res.loc[i, 'del.start.median']
-                del_end_median = res.loc[i, 'del.end.median']
-                del_start_range = res.loc[i, 'del.start.range']
-                del_end_range = res.loc[i, 'del.end.range']
-                del_start = res.loc[i, 'del.start']
-                del_end = res.loc[i, 'del.end']
-                lfstart = res.loc[i, 'lfstart']
-                lfend = res.loc[i, 'lfend']
-                
-                res.loc[i, 'del.start.median'] = del_end_median
-                res.loc[i, 'del.end.median'] = del_start_median
-                res.loc[i, 'del.start.range'] = del_end_range
-                res.loc[i, 'del.end.range'] = del_start_range
-                res.loc[i, 'del.start'] = del_end
-                res.loc[i, 'del.end'] = del_start
-                res.loc[i, 'lfstart'] = lfend
-                res.loc[i, 'lfend'] = lfstart
-        
-        # Format exactly like R script
-        res['perc'] = res['perc'].round(4)
-        
-        # Calculate final coordinates exactly like R script
-        res['del.start.median'] = res['del.start.median'] + 1
-        res['final.event.size'] = np.where(
-            res['final.event'] == 'del',
-            res['delsize'],
-            self.genome_length - res['delsize']
-        )
-        res['final.end'] = np.where(
-            res['final.event'] == 'del',
-            res['del.end.median'],
-            res['del.start.median'] - 1
-        )
-        res['final.start'] = np.where(
-            res['final.event'] == 'del',
-            res['del.start.median'],
-            res['del.end.median'] + 1
-        )
-        
-        # Handle wraparound
-        res['del.start.median'] = np.where(
-            res['del.start.median'] == self.genome_length + 1,
-            1,
-            res['del.start.median']
-        )
-        res['final.start'] = np.where(
-            res['final.start'] == self.genome_length + 1,
-            1,
-            res['final.start']
-        )
-
-        # --- Blacklist crossing flag using final coordinates ---
-        res['blacklist_crossing'] = [
-            'yes' if self._crosses_blacklist(row['final.start'], row['final.end'], blacklist_regions) else 'no'
-            for _, row in res.iterrows()
-        ]
-        
-        # Create final output exactly like R script PLUS group information
-        res_final = pd.DataFrame({
-            'sample': res['sample'],
-            'cluster.id': res['cluster'],
-            'group': res.get('group', 'G1'),  # Add group column with default
-            'alt.reads': res['nread'].astype(int),
-            'ref.reads': res['tread'].astype(int),
-            'heteroplasmy': res['perc'],
-            'del.start.range': res['del.start.range'],
-            'del.end.range': res['del.end.range'],
-            'del.size': res['delsize'].astype(int),
-            'final.event': res['final.event'],
-            'final.start': res['final.start'].astype(int),
-            'final.end': res['final.end'].astype(int),
-            'final.size': res['final.event.size'].astype(int),
-            'blacklist_crossing': res['blacklist_crossing'],
-            'seq1': res['seq1'],  # Changed from flanking_results
-            'seq2': res['seq2'],  # Changed from flanking_results
-            'seq': res['seq']     # Changed from flanking_results
-        })
-        
-        # Save results
-        res_final.to_csv(output_file, sep='\t', index=False)
-        print(f"Results saved to {output_file}")
-        print(f"Events: {len(res_final)}")
-
-    def save_summary(self, events, output_file, analysis_stats, classification_result=None, blacklist_regions=None):
-        """Save analysis summary with biologically meaningful metrics based on MitoSAlt literature"""
-        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Load config for threshold reporting
-        cfg = self.config
-        
-        # Use passed classification results
-        if classification_result:
-            classification, reason, criteria, events_with_groups = classification_result
-        else:
-            # Fallback if not provided
-            if len(events) > 0:
-                classifier = EventClassifier(self.genome_length, self.config)
-                classification, reason, criteria, events_with_groups = classifier.classify(events, blacklist_regions)
-            else:
-                classification, reason = "No events", "No events detected"
-                criteria = {}
-                events_with_groups = pd.DataFrame()
-        
-        # Count events by type
-        del_count = (events['final.event'] == 'del').sum() if len(events) > 0 else 0
-        dup_count = (events['final.event'] == 'dup').sum() if len(events) > 0 else 0
-        dloop_count = (events['dloop'] == 'yes').sum() if len(events) > 0 else 0
-        
-        # Calculate comprehensive statistics
-        if len(events) > 0:
-            size_stats = {
-                'min': events['delsize'].min(),
-                'max': events['delsize'].max(),
-                'mean': events['delsize'].mean(),
-                'median': events['delsize'].median()
-            }
-            het_stats = {
-                'min': events['perc'].min(),
-                'max': events['perc'].max(),
-                'mean': events['perc'].mean(),
-                'median': events['perc'].median()
-            }
-        else:
-            size_stats = {'min': 0, 'max': 0, 'mean': 0, 'median': 0}
-            het_stats = {'min': 0, 'max': 0, 'mean': 0, 'median': 0}
-        
-        # Write summary file with literature-based analysis
-        with open(output_file, 'w') as f:
-            f.write("MitoSAlt Analysis Summary\n")
-            f.write("=" * 50 + "\n\n")
-            
-            # Analysis workflow stats
-            f.write("Analysis Workflow:\n")
-            f.write("-" * 20 + "\n")
-            for key, value in analysis_stats.items():
-                f.write(f"{key}: {value}\n")
-            f.write("\n")
-            
-            # Event pattern classification (PRIMARY SECTION - most important)
-            f.write("Event pattern classification (blacklist-filtered):\n")
-            f.write("-" * 50 + "\n")
-            f.write(f"Type: {classification}\n")
-            f.write(f"Biological basis: {reason}\n")
-            if 'subtype' in criteria:
-                f.write(f"Subtype: {criteria['subtype']}\n")
-            if criteria.get('blacklist_filtered_count', 0) > 0:
-                f.write(f"Blacklist-crossing events excluded: {criteria['blacklist_filtered_count']}\n")
-                f.write(f"Events used for classification: {criteria.get('total_events', 0)} (of {criteria.get('total_raw_events', 0)} total)\n")
-            f.write("\n")
-            
-            # Spatial groups analysis
-            f.write("Spatial Groups Analysis:\n")
-            f.write("-" * 25 + "\n")
-            if 'group_analysis' in criteria and criteria['group_analysis']:
-                # Group by event type for better reporting
-                del_groups = [g for g in criteria['group_analysis'] if g.get('event_type') == 'del']
-                dup_groups = [g for g in criteria['group_analysis'] if g.get('event_type') == 'dup']
-                
-                if del_groups:
-                    f.write("Deletion groups:\n")
-                    for group_info in del_groups:
-                        rep = group_info['representative']
-                        actual_size = rep['end'] - rep['start']
-                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
-                            f"max heteroplasmy {rep['heteroplasmy']:.1f}% "
-                            f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
-                
-                if dup_groups:
-                    f.write("Duplication groups:\n")
-                    for group_info in dup_groups:
-                        rep = group_info['representative']
-                        actual_size = rep['end'] - rep['start']
-                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} events, "
-                            f"max heteroplasmy {rep['heteroplasmy']:.1f}% "
-                            f"(at {rep['start']:.0f}-{rep['end']:.0f}bp, size {actual_size:.0f}bp)\n")
-                
-                if not del_groups and not dup_groups:
-                    f.write("Groups detected but event types not properly classified\n")
-                    # Fallback - show all groups regardless of type
-                    for group_info in criteria['group_analysis']:
-                        rep = group_info['representative']
-                        event_type = group_info.get('event_type', rep.get('event_type', 'unknown'))
-                        f.write(f"  {group_info['group_id']}: {group_info['event_count']} {event_type} events, "
-                            f"max heteroplasmy {rep['heteroplasmy']:.1%}\n")
-            else:
-                f.write("No spatial groups identified\n")
-            f.write("\n")
-            
-            # Heteroplasmy-based analysis (KEY BIOLOGICAL METRIC)
-            f.write("Heteroplasmy distribution (literature-based thresholds):\n")
-            f.write("-" * 55 + "\n")
-            if len(events) > 0:
-                f.write(f"High heteroplasmy events (≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('high_het_count', 0)}\n")
-                f.write(f"Medium heteroplasmy events ({cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}-{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('medium_het_count', 0)}\n")
-                f.write(f"Low heteroplasmy events (<{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('low_het_count', 0)}\n")
-                f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f}%\n")
-                f.write(f"Median heteroplasmy: {criteria.get('median_heteroplasmy', 0):.3f}%\n")
-            else:
-                f.write("No events detected\n")
-            f.write("\n")
-            
-            # Event counts summary
-            f.write("Event summary:\n")
-            f.write("-" * 15 + "\n")
-            f.write(f"Total events: {len(events)}\n")
-            f.write(f"Deletions: {del_count}\n")
-            f.write(f"Duplications: {dup_count}\n")
-            f.write(f"Events crossing origin (dloop=yes): {dloop_count}\n\n")
-            
-            # Basic genomic metrics (for reference)
-            f.write("Basic metrics:\n")
-            f.write("-" * 15 + "\n")
-            if len(events) > 0:
-                f.write(f"Position range spanned: {criteria.get('position_range', 0):.0f} bp\n")
-                f.write(f"Size coefficient of variation: {criteria.get('size_coefficient_variation', 0):.2f}\n")
-            else:
-                f.write("No events to analyze\n")
-            f.write("\n")
-            
-            # Size statistics
-            f.write("Size statistics (bp):\n")
-            f.write("-" * 20 + "\n")
-            f.write(f"Min size: {size_stats['min']:.0f}\n")
-            f.write(f"Max size: {size_stats['max']:.0f}\n")
-            f.write(f"Mean size: {size_stats['mean']:.1f}\n")
-            f.write(f"Median size: {size_stats['median']:.1f}\n")
-            if len(events) > 0:
-                f.write(f"Size coefficient of variation: {criteria.get('size_coefficient_variation', 0):.2f}\n")
-            f.write("\n")
-            
-            # Heteroplasmy statistics
-            f.write("Heteroplasmy statistics:\n")
-            f.write("-" * 25 + "\n")
-            f.write(f"Min heteroplasmy: {het_stats['min']:.4f}%\n")
-            f.write(f"Max heteroplasmy: {het_stats['max']:.4f}%\n")
-            f.write(f"Mean heteroplasmy: {het_stats['mean']:.4f}%\n")
-            f.write(f"Median heteroplasmy: {het_stats['median']:.4f}%\n\n")
-
-            # Classification details (DETAILED TECHNICAL SECTION)
-            if criteria and 'classification_scores' in criteria:
-                f.write("Classification Algorithm Details:\n")
-                f.write("-" * 35 + "\n")
-                scores = criteria['classification_scores']
-                f.write(f"Single pattern score: {scores['single_score']} / 12 possible criteria\n")
-                f.write(f"Multiple pattern score: {scores['multiple_score']} / 13 possible criteria\n")
-                f.write(f"Decision: {'Single' if scores['single_score'] > scores['multiple_score'] else 'Multiple'} pattern (higher score wins)\n")
-                f.write("\n")
-                f.write("Score calculation:\n")
-                f.write("- Each pattern type has biological criteria (12 for Single, 13 for Multiple)\n")
-                f.write("- Single pattern criteria: dominant high-het events, few total events, tight clustering, etc.\n")
-                f.write("- Multiple pattern criteria: many events, mixed types, scattered distribution, etc.\n")
-                f.write("- Score = count of criteria met for each pattern type\n")
-                f.write("\n")
-                f.write("Biological thresholds used:\n")
-                f.write(f"- High heteroplasmy threshold: ≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% (pathogenic significance)\n")
-                f.write(f"- Significance threshold: ≥{cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD:.0f}% (above noise level)\n")
-                f.write(f"- Low heteroplasmy threshold: <{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}% (likely artifacts)\n")
-                f.write(f"- Multiple event threshold: >{cfg.TOTAL_EVENT_COUNT_THRESHOLD} events (mouse model pattern)\n")
-                f.write(f"- Major event threshold: ≤{cfg.MAJOR_EVENT_COUNT_THRESHOLD} high-het events (single pattern)\n")
-                f.write(f"- Spatial clustering radius: {cfg.CLUSTER_RADIUS}bp (biologically relevant)\n")
-                f.write("\n")
-            
-            # Biological interpretation
-            f.write("Biological interpretation:\n")
-            f.write("-" * 25 + "\n")
-            if classification == "Single":
-                f.write("Pattern consistent with:\n")
-                f.write("- Single pathogenic deletion/duplication\n")
-                f.write("- Classical mitochondrial disease patient profile\n")
-                f.write("- Possible accompanying low-level artifacts\n")
-                if criteria.get('max_heteroplasmy', 0) >= cfg.HIGH_HETEROPLASMY_THRESHOLD:
-                    f.write("- High heteroplasmy suggests functional impact\n")
-            elif classification == "Multiple":
-                f.write("Pattern consistent with:\n")
-                f.write("- Multiple structural alterations\n") 
-                f.write("- Mouse model of mtDNA maintenance defect\n")
-                f.write("- Complex replication/repair dysfunction\n")
-                if criteria.get('many_events', False):
-                    f.write("- Extensive genomic instability\n")
-            else:
-                f.write("- Ambiguous or unusual pattern\n")
-            f.write("\n")
-            
-            # Literature references
-            f.write("Reference standards:\n")
-            f.write("-" * 20 + "\n")
-            f.write("Classification based on:\n")
-            f.write("- Basu et al. PLoS Genet 2020 (MitoSAlt methodology)\n")
-            f.write("- Patient samples: single high-heteroplasmy events (>35%)\n")
-            f.write("- Mouse models: multiple low-heteroplasmy events (<3%)\n")
-            f.write(f"- Clinical thresholds: >{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% for pathogenic significance\n")
-        
-        print(f"Enhanced analysis summary saved to {output_file}")
-        print(f"Event classification: {classification} ({reason})")
-        if 'subtype' in criteria:
-            print(f"Pattern subtype: {criteria['subtype']}")
-
 
 def main():
     parser = argparse.ArgumentParser(description='Generate circular plots of mitochondrial DNA structural alterations')
@@ -945,7 +570,7 @@ def main():
     blacklist_regions = None
     if args.blacklist:
         try:
-            blacklist_regions = plotter._load_blacklist_regions(args.blacklist)
+            blacklist_regions = BlacklistReader.load_blacklist_regions(args.blacklist)
             print(f"Loaded {len(blacklist_regions)} blacklist regions")
         except Exception as e:
             print(f"Warning: Could not load blacklist file: {e}")
@@ -1006,19 +631,21 @@ def main():
         plotter.create_plot(events_with_groups, str(plot_file), figsize=(10, 10), blacklist_regions=blacklist_regions)
         
         results_file = indel_dir / f"{args.output_name}.grouped.tsv"
-        plotter.save_results(events_with_groups, str(results_file), args.genome_fasta, blacklist_regions=blacklist_regions)
+        write_tsv(events_with_groups, str(results_file), args.genome_length, blacklist_regions=blacklist_regions)
+
         
         # Use filtered events for summary too to maintain consistency
         summary_file = indel_dir / f"{args.output_name}_summary.txt"
         print(f"Attempting to save summary to: {summary_file}")
         print(f"Stats available: {len(stats) if stats else 'None'}")
-        plotter.save_summary(
-            events_with_groups, 
-            str(summary_file), 
-            stats, 
-            classification_result=(classification, reason, criteria, events_with_groups), 
+        write_summary(
+            events_with_groups,
+            str(summary_file),
+            stats,
+            (classification, reason, criteria, events_with_groups),
+            config=plotter.config,
             blacklist_regions=blacklist_regions
-            )
+        )
 
         # Add VCF output if requested
         if args.output_vcf:
