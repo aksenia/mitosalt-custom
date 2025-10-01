@@ -68,6 +68,8 @@ RUN sed -i \
     /opt/MitoSAlt_1.1.1/delplot.R
 RUN sed -i 's#delplot\.R#/opt/MitoSAlt_1.1.1/delplot.R#g'  MitoSAlt1.1.1.pl
 
+# Copy the saltshaker package
+COPY saltshaker/ /opt/MitoSAlt_1.1.1/saltshaker/
 
 # Copy the genome download and config script
 COPY config_human.txt download_genomes.sh mitosalt_visualizer.py /opt/MitoSAlt_1.1.1/
@@ -101,5 +103,10 @@ ENV PATH="/opt/MitoSAlt_1.1.1:/opt/bbmap:/usr/local/bin:/bin:${PATH}"
 ENV PATH="/opt/venv/bin:${PATH}"
 
 
+# Set working directory so imports work
 WORKDIR /data
+# /opt/MitoSAlt_1.1.1 - try this if issues with internal 
+
+# Or ensure Python path includes the directory
+ENV PYTHONPATH="/opt/MitoSAlt_1.1.1:${PYTHONPATH}"
 CMD ["/bin/bash"]
