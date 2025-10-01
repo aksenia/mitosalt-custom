@@ -13,6 +13,7 @@ import argparse
 from pathlib import Path
 from Bio import SeqIO
 from saltshaker.config import ClassificationConfig
+from saltshaker.event_caller import EventCaller
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -33,213 +34,6 @@ class MitoPlotter:
             'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
         self.dup_cmap = LinearSegmentedColormap.from_list(
             'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
-    
-    def load_data(self, cluster_file, breakpoint_file):
-        """Load and process cluster and breakpoint data following R script exactly"""
-        
-        # Check if cluster file is empty
-        if Path(cluster_file).stat().st_size == 0:
-            print("Empty cluster file, no events to plot")
-            return pd.DataFrame()
-        
-        # Load cluster data
-        print(f"Loading cluster file: {cluster_file}")
-        clusters = pd.read_csv(cluster_file, sep='\t', header=None)
-        clusters.columns = ['cluster', 'read', 'del.start', 'del.end', 'lfstart', 'lfend', 'nread', 'tread', 'perc']
-        clusters = clusters[~clusters['cluster'].isna()]
-        
-        # Extract sample name
-        sample_name = Path(cluster_file).name.replace('.cluster', '')
-        clusters['sample'] = sample_name
-        
-        print(f"Loaded {len(clusters)} clusters")
-        
-        # Calculate medians and ranges
-        def calculate_median(x):
-            return np.median([int(i) for i in str(x).split(',')])
-        
-        def calculate_min(x):
-            return min([int(i) for i in str(x).split(',')])
-            
-        def calculate_max(x):
-            return max([int(i) for i in str(x).split(',')])
-        
-        clusters['del.start.median'] = clusters['del.start'].apply(calculate_median)
-        clusters['del.end.median'] = clusters['del.end'].apply(calculate_median)
-        clusters['del.start.min'] = clusters['del.start'].apply(calculate_min)
-        clusters['del.start.max'] = clusters['del.start'].apply(calculate_max)
-        clusters['del.end.min'] = clusters['del.end'].apply(calculate_min)
-        clusters['del.end.max'] = clusters['del.end'].apply(calculate_max)
-        
-        # Create range strings (with spaces around dash)
-        clusters['del.start.range'] = clusters['del.start.min'].astype(str) + ' - ' + clusters['del.start.max'].astype(str)
-        clusters['del.end.range'] = clusters['del.end.min'].astype(str) + ' - ' + clusters['del.end.max'].astype(str)
-        
-        # Create list.reads exactly like R script: strsplit(res$read,",",fixed=T)
-        list_reads = []
-        length_list_reads = []
-        
-        for idx, row in clusters.iterrows():
-            reads = row['read'].split(',')
-            reads = [r.strip() for r in reads]  # Remove any whitespace
-            list_reads.extend(reads)
-            length_list_reads.append(len(reads))
-        
-        # Create res.read 
-        res_read_data = []
-        for i, row in clusters.iterrows():
-            sample = row['sample'] 
-            cluster = row['cluster']
-            reads = row['read'].split(',')
-            for read in reads:
-                res_read_data.append({
-                    'sample': sample,
-                    'cluster': cluster,
-                    'read': read.strip()
-                })
-        
-        res_read = pd.DataFrame(res_read_data)
-        print(f"Expanded to {len(res_read)} individual read records")
-        
-        # Load breakpoint data exactly like R script
-        # bp <- read.delim(bpfile, header=FALSE)[,c(2,4,5,10)]
-        # colnames(bp)<-c("read","del.start","del.end","dloop")
-        print(f"Loading breakpoint file: {breakpoint_file}")
-        bp_raw = pd.read_csv(breakpoint_file, sep='\t', header=None)
-        
-        # Take columns 2,4,5,10 (R uses 1-based indexing, so Python is 1,3,4,9)
-        bp = bp_raw.iloc[:, [1, 3, 4, 9]].copy()
-        bp.columns = ['read', 'del.start', 'del.end', 'dloop']
-        bp = bp[~bp['read'].isna()]
-        
-        print(f"Loaded {len(bp)} breakpoint records")
-        print(f"Sample breakpoint data:\n{bp.head()}")
-        print(f"Unique dloop values: {bp['dloop'].unique()}")
-        
-        # Merge res.read with bp 
-        # res.read.bp<-merge(res.read,bp,by="read")
-        res_read_bp = pd.merge(res_read, bp, on='read', how='inner')
-        print(f"After merge with breakpoints: {len(res_read_bp)} records")
-        
-        if len(res_read_bp) == 0:
-            print("No matching reads found between clusters and breakpoints")
-            return pd.DataFrame()
-        
-        # Get unique combinations 
-        # res.read.bp1<-unique(res.read.bp[,c(2,3,6)])  # sample, cluster, dloop
-        res_read_bp1 = res_read_bp[['sample', 'cluster', 'dloop']].drop_duplicates()
-        print(f"Unique cluster-dloop combinations: {len(res_read_bp1)}")
-        
-        # Final merge 
-        # res<-merge(res,res.read.bp1,by=c("sample","cluster"))
-        final_clusters = pd.merge(clusters, res_read_bp1, on=['sample', 'cluster'], how='inner')
-        print(f"Final clusters after merge: {len(final_clusters)}")
-        
-        if len(final_clusters) == 0:
-            print("No clusters remained after merging with breakpoint data")
-            return pd.DataFrame()
-        
-        # Calculate delsize 
-        final_clusters['delsize'] = final_clusters['del.end.median'] - final_clusters['del.start.median']
-        
-        # Handle dloop wraparound
-        dloop_mask = final_clusters['dloop'] == 'yes'
-        if dloop_mask.any():
-            final_clusters.loc[dloop_mask, 'delsize'] = (
-                self.genome_length - final_clusters.loc[dloop_mask, 'del.end.median'] + 
-                final_clusters.loc[dloop_mask, 'del.start.median']
-            )
-        
-        print(f"Calculated delsize for {len(final_clusters)} events")
-        print(f"dloop=='yes' events: {dloop_mask.sum()}")
-        
-        # Filter by heteroplasmy 
-        # if(nrow(res[res$perc>=hp.limit,])>0)
-        final_clusters = final_clusters[final_clusters['perc'] >= self.heteroplasmy_limit]
-        print(f"Events after heteroplasmy filter (>={self.heteroplasmy_limit}): {len(final_clusters)}")
-        
-        if len(final_clusters) == 0:
-            print("No events above heteroplasmy threshold")
-            return pd.DataFrame()
-        
-        # Classification: Start with all as deletions, then apply R script logic
-        final_clusters['final.event'] = 'del'
-        final_clusters = self._apply_origin_classification(final_clusters)
-        
-        return final_clusters
-    
-    def _apply_origin_classification(self, clusters):
-        """
-        Apply origin overlap classification exactly like R script
-        """
-        print(f"Starting classification with {len(clusters)} events")
-        print(f"OriH: {self.ori_h}, OriL: {self.ori_l}")
-        
-        # Track changes for debugging
-        del_count_start = (clusters['final.event'] == 'del').sum()
-        
-        # First loop: OriH classification (no coordinate swapping)
-        for i in clusters.index:
-            Rs = self.ori_h[0]  # ohs
-            Re = self.ori_h[1]  # ohe
-            Ds = clusters.loc[i, 'del.start.median']
-            De = clusters.loc[i, 'del.end.median']
-            
-            # R script OriH logic (no swapping of coordinates)
-            if Re >= Rs:
-                # Essential region NOT covering pos 0
-                if ((Ds >= Rs) and (Ds <= Re)) or ((De >= Rs) and (De <= Re)):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De > Ds) and (Ds <= Rs) and (De >= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De < Ds) and ((De >= Re) or (Ds <= Rs)):
-                    clusters.loc[i, 'final.event'] = 'dup'
-            else:
-                # Essential region IS covering pos 0
-                if (Ds >= Rs) or (Ds <= Re) or (De >= Rs) or (De <= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De < Ds):
-                    clusters.loc[i, 'final.event'] = 'dup'
-        
-        after_orih = (clusters['final.event'] == 'dup').sum()
-        print(f"After OriH: {after_orih} events classified as dup")
-        
-        # Second loop: OriL classification (coordinate swapping for dloop=='yes')
-        for i in clusters.index:
-            dloop = clusters.loc[i, 'dloop']
-            Rs = self.ori_l[0]  # ols
-            Re = self.ori_l[1]  # ole
-            
-            # Coordinate assignment
-            if dloop == 'yes':
-                Ds = clusters.loc[i, 'del.end.median']    # Swapped
-                De = clusters.loc[i, 'del.start.median']  # Swapped
-            else:
-                Ds = clusters.loc[i, 'del.start.median']
-                De = clusters.loc[i, 'del.end.median']
-            
-            # Same overlap logic as OriH
-            if Re >= Rs:
-                # Essential region NOT covering pos 0
-                if ((Ds >= Rs) and (Ds <= Re)) or ((De >= Rs) and (De <= Re)):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De > Ds) and (Ds <= Rs) and (De >= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De < Ds) and ((De >= Re) or (Ds <= Rs)):
-                    clusters.loc[i, 'final.event'] = 'dup'
-            else:
-                # Essential region IS covering pos 0
-                if (Ds >= Rs) or (Ds <= Re) or (De >= Rs) or (De <= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
-                elif (De < Ds):
-                    clusters.loc[i, 'final.event'] = 'dup'
-        
-        # Final counts
-        del_count = (clusters['final.event'] == 'del').sum()
-        dup_count = (clusters['final.event'] == 'dup').sum()
-        print(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
-        
-        return clusters
 
     def _perform_spatial_grouping(self, events_df, radius=None, high_het_threshold=None, sig_het_threshold=None, min_group_size=None):
         """
@@ -943,59 +737,6 @@ class MitoPlotter:
                 print(f"DEBUG: Added {len(blacklist_events)} blacklist events back for plotting")
 
         return classification, reason_str, criteria, events_with_groups
-
-    def _align_breakpoints(self, starts, ends, genome_seq, flank_size=15):
-        """Python implementation of R align.bp function"""
-        results = []
-        
-        for start, end in zip(starts, ends):
-            # Convert to 1-based coordinates like R
-            start_1based = int(start) + 1
-            end_1based = int(end) + 1
-            
-            # Extract sequences around start breakpoint
-            bp_start = max(0, start_1based - flank_size - 1)
-            bp_end = min(len(genome_seq), start_1based + flank_size)
-            bp = genome_seq[bp_start:bp_end]
-            
-            bp_1_start = max(0, start_1based - flank_size - 1)
-            bp_1_end = start_1based - 1
-            bp_1 = genome_seq[bp_1_start:bp_1_end] if bp_1_end > bp_1_start else ""
-            
-            bp_2_start = start_1based
-            bp_2_end = min(len(genome_seq), start_1based + flank_size)
-            bp_2 = genome_seq[bp_2_start:bp_2_end]
-            
-            bp_res = f"{bp_1}*{bp_2}"
-            
-            # Extract sequences around end breakpoint
-            bp1_start = max(0, end_1based - flank_size - 1)
-            bp1_end = min(len(genome_seq), end_1based + flank_size)
-            bp1 = genome_seq[bp1_start:bp1_end]
-            
-            bp1_1_start = max(0, end_1based - flank_size - 1)
-            bp1_1_end = end_1based - 1
-            bp1_1 = genome_seq[bp1_1_start:bp1_1_end] if bp1_1_end > bp1_1_start else ""
-            
-            bp1_2_start = end_1based
-            bp1_2_end = min(len(genome_seq), end_1based + flank_size)
-            bp1_2 = genome_seq[bp1_2_start:bp1_2_end]
-            
-            bp1_res = f"{bp1_1}*{bp1_2}"
-            
-            # Pattern matching logic (simplified)
-            a = bp.replace('N', 'A')
-            b = bp1.replace('N', 'A')
-            seq_result = "NA"  # Default value
-            
-            # Store results
-            results.append({
-                'seq1': bp_res,
-                'seq2': bp1_res,
-                'seq': seq_result
-            })
-        
-        return pd.DataFrame(results)
     
     def group_sort_key(self, group_id):
         """Convert group ID to sortable tuple (priority, number)"""
@@ -1563,31 +1304,6 @@ class MitoPlotter:
             for _, row in res.iterrows()
         ]
         
-        # Get flanking sequences
-        if genome_fasta and Path(genome_fasta).exists():
-            try:
-                genome_record = next(SeqIO.parse(genome_fasta, 'fasta'))
-                genome_seq = str(genome_record.seq).upper()
-                flanking_results = self._align_breakpoints(
-                    res['final.start'] - 1,
-                    res['final.end'],
-                    genome_seq,
-                    self.flank_size
-                )
-            except Exception as e:
-                print(f"Warning: Flanking sequence analysis failed: {e}")
-                flanking_results = pd.DataFrame({
-                    'seq1': ['NA'] * len(res),
-                    'seq2': ['NA'] * len(res),
-                    'seq': ['NA'] * len(res)
-                })
-        else:
-            flanking_results = pd.DataFrame({
-                'seq1': ['NA'] * len(res),
-                'seq2': ['NA'] * len(res),
-                'seq': ['NA'] * len(res)
-            })
-        
         # Create final output exactly like R script PLUS group information
         res_final = pd.DataFrame({
             'sample': res['sample'],
@@ -1604,9 +1320,9 @@ class MitoPlotter:
             'final.end': res['final.end'].astype(int),
             'final.size': res['final.event.size'].astype(int),
             'blacklist_crossing': res['blacklist_crossing'],
-            'seq1': flanking_results['seq1'],
-            'seq2': flanking_results['seq2'],
-            'seq': flanking_results['seq']
+            'seq1': res['seq1'],  # Changed from flanking_results
+            'seq2': res['seq2'],  # Changed from flanking_results
+            'seq': res['seq']     # Changed from flanking_results
         })
         
         # Save results
@@ -1866,13 +1582,39 @@ def main():
             print(f"Warning: Could not load blacklist file: {e}")
             blacklist_regions = []
     
-    # Load and process data
-    result = plotter.load_data(args.cluster_file, args.breakpoint_file)
-    if isinstance(result, tuple):
-        events, stats = result
-    else:
-        events = result
-        stats = {}
+    # Load and process data using EventCaller
+    event_caller = EventCaller(
+        genome_length=args.genome_length,
+        ori_h=(args.ori_h_start, args.ori_h_end),
+        ori_l=(args.ori_l_start, args.ori_l_end),
+        heteroplasmy_limit=args.heteroplasmy_limit,
+        flank_size=args.flank_size
+    )
+
+    events = event_caller.call_events(args.cluster_file, args.breakpoint_file)
+    # ADD THIS - calculate final coordinates first (needed for flanking sequences)
+    events['perc'] = events['perc'].round(4)
+    events['del.start.median'] = events['del.start.median'] + 1
+    events['final.event.size'] = np.where(
+        events['final.event'] == 'del',
+        events['delsize'],
+        args.genome_length - events['delsize']
+    )
+    events['final.end'] = np.where(
+        events['final.event'] == 'del',
+        events['del.end.median'],
+        events['del.start.median'] - 1
+    )
+    events['final.start'] = np.where(
+        events['final.event'] == 'del',
+        events['del.start.median'],
+        events['del.end.median'] + 1
+    )
+
+    # ADD THIS - add flanking sequences
+    events = event_caller.add_flanking_sequences(events, args.genome_fasta)
+
+    stats = {}  # Will populate later
     
     if len(events) > 0:
         # Get events with group assignments from classification
