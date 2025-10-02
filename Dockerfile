@@ -1,5 +1,10 @@
-FROM ubuntu:24.04
-ENV DEBIAN_FRONTEND=noninteractive
+FROM python:3.12-bullseye
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANGUAGE=C.UTF-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 
 # Install system dependencies and tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -50,31 +55,30 @@ RUN R -e "if (!requireNamespace('BiocManager', quietly=TRUE)) install.packages('
 
 # Download and unpack MitoSAlt
 WORKDIR /opt
-RUN wget -O mitosalt.zip "https://sourceforge.net/projects/mitosalt/files/latest/download" && \
+
+ENV MITOSALT_VERSION=1.1.1
+RUN wget -O mitosalt.zip "https://sourceforge.net/projects/mitosalt/files/MitoSAlt_${MITOSALT_VERSION}.zip/download" && \
     unzip mitosalt.zip && \
     rm mitosalt.zip
 
-WORKDIR /opt/MitoSAlt_1.1.1
+WORKDIR /opt/MitoSAlt_${MITOSALT_VERSION}
 
 # Correct the paths in the analysis and plotting R script to work with container
 RUN sed -i \
     -e 's|plotfile<-paste("plot/",filename,".pdf",sep="")|plotfile<-paste("/output/plot/",filename,".pdf",sep="")|' \
     -e 's|textfile<-paste("indel/",filename,".tsv",sep="")|textfile<-paste("/output/indel/",filename,".tsv",sep="")|' \
-    /opt/MitoSAlt_1.1.1/delplot.R
-RUN sed -i 's#delplot\.R#/opt/MitoSAlt_1.1.1/delplot.R#g'  MitoSAlt1.1.1.pl
+    /opt/MitoSAlt_${MITOSALT_VERSION}/delplot.R
+RUN sed -i 's#delplot\.R#/opt/MitoSAlt_${MITOSALT_VERSION}/delplot.R#g'  MitoSAlt${MITOSALT_VERSION}.pl
 
 # Copy saltshaker package source code
-COPY saltshaker/ /opt/MitoSAlt_1.1.1/saltshaker/
-COPY setup.py pyproject.toml README.md /opt/MitoSAlt_1.1.1/
+COPY saltshaker/ /opt/MitoSAlt_${MITOSALT_VERSION}/saltshaker/
+COPY setup.py pyproject.toml README.md /opt/MitoSAlt_${MITOSALT_VERSION}/
 
 # Copy other MitoSAlt scripts and config
-COPY config_human.txt download_genomes.sh /opt/MitoSAlt_1.1.1/
-
-# Set working directory
-WORKDIR /opt/MitoSAlt_1.1.1
+COPY config_human.txt download_genomes.sh /opt/MitoSAlt_${MITOSALT_VERSION}/
 
 # Install the saltshaker package
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir --break-system-packages .
 
 # Make helper scripts executable
 RUN chmod +x download_genomes.sh
@@ -104,14 +108,11 @@ expect eof' > mitosalt_setup.exp && chmod +x mitosalt_setup.exp
 RUN ./mitosalt_setup.exp
 
 # Add MitoSAlt and tools to PATH
-ENV PATH="/opt/MitoSAlt_1.1.1:/opt/bbmap:/usr/local/bin:/bin:${PATH}"
-ENV PATH="/opt/venv/bin:${PATH}"
-
+ENV PATH="/opt/MitoSAlt_${MITOSALT_VERSION}:/opt/bbmap:/usr/local/bin:/bin:${PATH}"
 
 # Set working directory so imports work
 # WORKDIR /data
 
-
-# Or ensure Python path includes the directory
-ENV PYTHONPATH="/opt/MitoSAlt_1.1.1:${PYTHONPATH}"
+# Ensure Python path includes the directory
+ENV PYTHONPATH="/opt/MitoSAlt_${MITOSALT_VERSION}:${PYTHONPATH}"
 CMD ["/bin/bash"]
