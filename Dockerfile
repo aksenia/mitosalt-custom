@@ -11,11 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Setup virtual environment and install python packages
-RUN python3 -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN pip install --no-cache-dir pandas numpy matplotlib biopython
-
 # Install bedtools manually (latest stable release)
 ENV BEDTOOLS_VERSION=2.31.1
 RUN wget https://github.com/arq5x/bedtools2/releases/download/v${BEDTOOLS_VERSION}/bedtools-${BEDTOOLS_VERSION}.tar.gz && \
@@ -68,12 +63,22 @@ RUN sed -i \
     /opt/MitoSAlt_1.1.1/delplot.R
 RUN sed -i 's#delplot\.R#/opt/MitoSAlt_1.1.1/delplot.R#g'  MitoSAlt1.1.1.pl
 
-# Copy the saltshaker package
+# Copy saltshaker package source code
 COPY saltshaker/ /opt/MitoSAlt_1.1.1/saltshaker/
+COPY setup.py pyproject.toml README.md /opt/MitoSAlt_1.1.1/
 
-# Copy the genome download and config script
-COPY config_human.txt download_genomes.sh mitosalt_visualizer.py /opt/MitoSAlt_1.1.1/
-RUN chmod +x download_genomes.sh mitosalt_visualizer.py
+# Copy other MitoSAlt scripts and config
+COPY config_human.txt download_genomes.sh /opt/MitoSAlt_1.1.1/
+
+# Set working directory
+WORKDIR /opt/MitoSAlt_1.1.1
+
+# Install the saltshaker package
+RUN pip install --no-cache-dir .
+
+# Make helper scripts executable
+RUN chmod +x download_genomes.sh
+
 
 RUN echo '#!/usr/bin/expect -f\n\
 set timeout -1\n\
@@ -104,8 +109,8 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 
 # Set working directory so imports work
-WORKDIR /data
-# /opt/MitoSAlt_1.1.1 - try this if issues with internal 
+# WORKDIR /data
+
 
 # Or ensure Python path includes the directory
 ENV PYTHONPATH="/opt/MitoSAlt_1.1.1:${PYTHONPATH}"
