@@ -19,7 +19,7 @@ class EventClassifier:
         self.config = config or ClassificationConfig()
         self.spatial_analyzer = SpatialGroupAnalyzer(genome_length, config)
     
-    def classify(self, events, blacklist_regions=None):
+    def classify(self, events: pd.DataFrame, blacklist_regions=None):
         """
         Classify events as Single or Multiple based on literature criteria:
         - Single: Dominated by one or few high-heteroplasmy events (typically >30-35%)
