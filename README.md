@@ -46,31 +46,3 @@ singularity exec --no-home \
 ## SAltShaker - Visualizer module for MitoSAlt results
 
 A Python port of the original MitoSAlt R plotting and classification script, with enhanced event pattern classification and visualization. Read more [here](./saltshaker/README.md).
-
-You can run the classifier and visualisation script separately on the outputs of MitoSAlt main pipeline:
-
-```bash
-# output prefix
-sample=$1
-# default settings from MitoSAlt config file
-msize=16569
-orihs=16081
-orihe=407
-orils=5730
-orile=5763
-sizelimit=10000
-hplimit=0.01
-MT_fasta=human_mt_rCRS.fasta
-flank=15
-
-singularity exec --no-home \
- --bind $(pwd)/data:/data \
- --bind $(pwd)/genome:/output/genome \
- --bind $(pwd)/output/${sample}:/output \
- --bind $(pwd)/output/${sample}:/tmp \
- mitosalt.sif bash -c "saltshaker \
-   ${msize} ${orihs} ${orihe} ${orils} ${orile} ${sizelimit} \
-   /output/indel/${sample}.cluster /output/indel/${sample}.breakpoint \
-   ${sample} ${hplimit} /output/genome/${MT_fasta} ${flank} \
-   --blacklist /output/genome/mt_blacklist.bed --output-dir /output"
-```
