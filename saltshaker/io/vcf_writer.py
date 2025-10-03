@@ -3,7 +3,6 @@ VCF Writer for MitoSAlt Events
 Outputs structural variants in VCF 4.3 format
 """
 
-import pandas as pd
 from datetime import datetime
 from pathlib import Path
 
@@ -22,21 +21,16 @@ class VCFWriter:
         self.reference_name = reference_name
         self.sample_name = sample_name
     
-    def write(self, events_df, classification_result, output_file, 
-              genome_length=16569):
+    def write(self, events_df, output_file, genome_length=16569):
         """
         Write events to VCF file
         
         Args:
-            events_df: DataFrame with events (must have group column)
-            classification_result: Tuple of (classification, reason, criteria, events_with_groups)
+            events_df: DataFrame with events (must have group column from classify)
             output_file: Path to output VCF file
             genome_length: Length of mitochondrial genome
         """
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-        
-        # Unpack classification result
-        classification, reason, criteria, events_with_groups = classification_result
         
         # Extract sample name if not provided
         if self.sample_name is None:
@@ -48,17 +42,17 @@ class VCFWriter:
         # Open file and write
         with open(output_file, 'w') as f:
             # Write header
-            self._write_header(f, classification, criteria, genome_length)
+            self._write_header(f, genome_length)
             
             # Write events
-            for _, event in events_with_groups.iterrows():
-                vcf_line = self._event_to_vcf(event, self.sample_name)
+            for _, event in events_df.iterrows():
+                vcf_line = self._event_to_vcf(event)
                 f.write(vcf_line + "\n")
         
         print(f"VCF output saved to {output_file}")
-        print(f"Wrote {len(events_with_groups)} events in VCF format")
+        print(f"Wrote {len(events_df)} events in VCF format")
     
-    def _write_header(self, f, classification, criteria, genome_length):
+    def _write_header(self, f, genome_length):
         """Write VCF header"""
         # File format
         f.write("##fileformat=VCFv4.3\n")
@@ -71,14 +65,13 @@ class VCFWriter:
         
         # INFO fields
         f.write('##INFO=<ID=SVTYPE,Number=1,Type=String,Description="Type of structural variant">\n')
-        f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">\n')
-        f.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT alleles">\n')
-        f.write('##INFO=<ID=HETFREQ,Number=1,Type=Float,Description="Heteroplasmy frequency (0-1)">\n')
+        f.write('##INFO=<ID=END,Number=1,Type=Integer,Description="End position of variant">\n')
+        f.write('##INFO=<ID=SVLEN,Number=1,Type=Integer,Description="Difference in length between REF and ALT">\n')
+        f.write('##INFO=<ID=HF,Number=1,Type=Float,Description="Heteroplasmy fraction (0-1)">\n')
         f.write('##INFO=<ID=GROUP,Number=1,Type=String,Description="Spatial group identifier">\n')
-        f.write('##INFO=<ID=PATTERN,Number=1,Type=String,Description="Event pattern classification (Single/Multiple)">\n')
         f.write('##INFO=<ID=CLUSTER,Number=1,Type=String,Description="Cluster identifier from MitoSAlt">\n')
-        f.write('##INFO=<ID=DLOOP,Number=0,Type=Flag,Description="Event crosses D-loop region">\n')
-        f.write('##INFO=<ID=BLCROSS,Number=0,Type=Flag,Description="Event crosses blacklist region">\n')
+        f.write('##INFO=<ID=DLOOP,Number=0,Type=Flag,Description="Variant crosses D-loop region">\n')
+        f.write('##INFO=<ID=BLCROSS,Number=0,Type=Flag,Description="Variant crosses blacklist region">\n')
         
         # FORMAT fields
         f.write('##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n')
@@ -88,18 +81,10 @@ class VCFWriter:
         f.write('##ALT=<ID=DEL,Description="Deletion">\n')
         f.write('##ALT=<ID=DUP,Description="Duplication">\n')
         
-        # Classification metadata
-        f.write(f'##SaltShaker_Classification={classification}\n')
-        if criteria:
-            f.write(f'##SaltShaker_SingleScore={criteria.get("classification_scores", {}).get("single_score", "NA")}\n')
-            f.write(f'##SaltShaker_MultipleScore={criteria.get("classification_scores", {}).get("multiple_score", "NA")}\n')
-            f.write(f'##SaltShaker_MaxHeteroplasmy={criteria.get("max_heteroplasmy", "NA"):.4f}\n')
-            f.write(f'##SaltShaker_TotalEvents={criteria.get("total_events", "NA")}\n')
-        
         # Column header
         f.write(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{self.sample_name}\n")
     
-    def _event_to_vcf(self, event, sample_name):
+    def _event_to_vcf(self, event):
         """Convert single event to VCF line"""
         # Basic fields
         chrom = self.reference_name
@@ -119,16 +104,15 @@ class VCFWriter:
             f"SVTYPE={svtype}",
             f"END={int(event['del.end.median'])}",
             f"SVLEN={int(event['delsize'])}",
-            f"HETFREQ={event['perc']/100:.4f}",  # Convert percentage to fraction
-            f"GROUP={event.get('group', 'G1')}",
-            f"PATTERN={event.get('pattern', 'Unknown')}",
+            f"HF={event['perc']/100:.4f}",
+            f"GROUP={event['group']}",
             f"CLUSTER={event.get('cluster', 'NA')}"
         ]
         
         # Add flags
         if event.get('dloop') == 'yes':
             info_parts.append("DLOOP")
-        if event.get('blacklist_crossing', False):
+        if event.get('blacklist_crossing') == 'yes':
             info_parts.append("BLCROSS")
         
         info = ";".join(info_parts)
@@ -137,12 +121,9 @@ class VCFWriter:
         format_field = "GT:AD"
         
         # Sample field
-        # GT: 0/1 for heteroplasmic
         gt = "0/1"
-        
-        # AD: alt_reads, ref_reads
         alt_reads = int(event.get('nread', 0))
-        ref_reads = int(event.get('tread', 0)) - alt_reads  # tread is total
+        ref_reads = int(event.get('tread', 0)) - alt_reads
         sample_field = f"{gt}:{alt_reads},{ref_reads}"
         
         # Combine
@@ -154,18 +135,16 @@ class VCFWriter:
         return vcf_line
 
 
-def write_vcf(events_df, classification_result, output_file, 
-              reference_name="chrM", sample_name=None, genome_length=16569):
+def write_vcf(events_df, output_file, genome_length, reference_name="chrM", sample_name=None):
     """
     Convenience function to write VCF
     
     Args:
-        events_df: DataFrame with mitochondrial events
-        classification_result: Classification output from _classify_event_pattern
+        events_df: DataFrame with mitochondrial events (must have group column)
         output_file: Output VCF file path
+        genome_length: Mitochondrial genome length
         reference_name: Chromosome/contig name
         sample_name: Sample identifier
-        genome_length: Mitochondrial genome length
     """
     writer = VCFWriter(reference_name=reference_name, sample_name=sample_name)
-    writer.write(events_df, classification_result, output_file, genome_length)
+    writer.write(events_df, output_file, genome_length)

@@ -26,11 +26,11 @@ class TSVWriter:
         """
         Write events to TSV file with coordinate swapping for output
         
-        This handles the R script's coordinate swapping logic for display
-        (R script lines ~360-375)
+        This handles the R script's coordinate swapping logic for display.
+        NOTE: Does NOT include 'group' column - that's added by classify step.
         
         Args:
-            events: DataFrame with events (should have seq1, seq2, seq columns)
+            events: DataFrame with events (from call step, no groups)
             output_file: Path to output TSV file
             blacklist_regions: List of blacklist regions for flagging
         """
@@ -39,6 +39,7 @@ class TSVWriter:
             return
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+#        events.to_pickle(output_file + '.pkl')  # Save intermediate pickle for debugging
         
         res = events.copy()
         print(f"Starting save_results with {len(res)} events")
@@ -104,11 +105,10 @@ class TSVWriter:
             for _, row in res.iterrows()
         ]
         
-        # Create final output exactly like R script PLUS group information
+        # Create final output - NO GROUP COLUMN (added by classify)
         res_final = pd.DataFrame({
             'sample': res['sample'],
             'cluster.id': res['cluster'],
-            'group': res.get('group', 'G1'),
             'alt.reads': res['nread'].astype(int),
             'ref.reads': res['tread'].astype(int),
             'heteroplasmy': res['perc'],
@@ -143,6 +143,33 @@ def write_tsv(events, output_file, genome_length, blacklist_regions=None):
     """
     writer = TSVWriter(genome_length)
     writer.write(events, output_file, blacklist_regions)
+
+
+class IntermediateWriter:
+    """Writes events in full internal format for downstream processing"""
+    
+    @staticmethod
+    def write(events, output_file, genome_length):
+        """
+        Write events with all columns preserved for downstream processing
+        
+        Args:
+            events: DataFrame with all internal columns
+            output_file: Path to output file
+            genome_length: Genome length for metadata
+        """
+        Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write metadata + full dataframe
+        with open(output_file, 'w') as f:
+            f.write(f"# genome_length={genome_length}\n")
+            events.to_csv(f, sep='\t', index=False)
+        
+        print(f"Intermediate results saved to {output_file}")
+    
+def write_intermediate(events, output_file, genome_length):
+    """Convenience function"""
+    IntermediateWriter.write(events, output_file, genome_length)
 
 
 class SummaryWriter:

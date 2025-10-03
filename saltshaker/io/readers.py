@@ -4,6 +4,7 @@ I/O Readers
 Handles reading of various input files.
 """
 
+from importlib.resources import path
 import pandas as pd
 from pathlib import Path
 
@@ -73,3 +74,33 @@ class BlacklistReader:
             print(f"Warning: Could not load blacklist file: {e}")
         
         return blacklist_regions
+    
+
+class IntermediateReader:
+    """Reads events in internal format"""
+    
+    @staticmethod
+    def read(filepath):
+        """
+        Read events with metadata
+        
+        Returns:
+            Tuple of (events_df, genome_length)
+        """
+        genome_length = None
+        
+        # Read metadata
+        with open(filepath, 'r') as f:
+            for line in f:
+                if line.startswith('# genome_length='):
+                    genome_length = int(line.strip().split('=')[1])
+                    break
+        
+        # Read full dataframe
+        events = pd.read_csv(filepath, sep='\t', comment='#')
+        
+        return events, genome_length
+
+def read_intermediate(filepath):
+    """Convenience function"""
+    return IntermediateReader.read(filepath)
