@@ -1,10 +1,5 @@
-FROM python:3.12-bullseye
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    LANGUAGE=C.UTF-8 \
-    LANG=C.UTF-8 \
-    LC_ALL=C.UTF-8
-
+FROM ubuntu:24.04
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies and tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -15,6 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libbz2-dev liblzma-dev expect \
     libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+#ENV LANG=en_US.UTF-8 \
+#    LANGUAGE=en_US:en \
+#    LC_ALL=en_US.UTF-8
 
 # Install bedtools manually (latest stable release)
 ENV BEDTOOLS_VERSION=2.31.1
