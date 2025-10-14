@@ -357,10 +357,10 @@ class EventClassifier:
             # Ambiguous case - use conservative approach
             if max_heteroplasmy >= HIGH_HETEROPLASMY_THRESHOLD:
                 classification = "Single"
-                reason_str = f"ambiguous but high max heteroplasmy ({max_heteroplasmy:.1%})"
+                reason_str = f"ambiguous but high max heteroplasmy ({max_heteroplasmy:.1f}%)"
             else:
                 classification = "Multiple" 
-                reason_str = f"ambiguous, multiple low-heteroplasmy events (median {median_heteroplasmy:.2%})"
+                reason_str = f"ambiguous, multiple low-heteroplasmy events (median {median_heteroplasmy:.2f}%)"
 
         # Report clustering density for all patterns (outside the if/elif)
         if clustering_density > HIGH_CLUSTERING_DENSITY:
