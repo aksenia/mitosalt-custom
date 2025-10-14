@@ -301,9 +301,9 @@ class EventClassifier:
             # Detailed reasoning for single pattern (with group-based analysis)
             reasons = []
             if len(high_het_events) >= 1:
-                reasons.append(f"dominant high-heteroplasmy event(s) ({len(high_het_events)} at ≥{HIGH_HETEROPLASMY_THRESHOLD:.0%})")
+                reasons.append(f"dominant high-heteroplasmy event(s) ({len(high_het_events)} at ≥{HIGH_HETEROPLASMY_THRESHOLD:.0f}%)")
             if max_heteroplasmy >= HIGH_HETEROPLASMY_THRESHOLD:
-                reasons.append(f"max heteroplasmy {max_heteroplasmy:.1%}")
+                reasons.append(f"max heteroplasmy {max_heteroplasmy:.1f}%")
             if significant_del_count + significant_dup_count <= MAJOR_EVENT_COUNT_THRESHOLD:
                 reasons.append(f"few significant events ({significant_del_count} del, {significant_dup_count} dup ≥5%)")
             
