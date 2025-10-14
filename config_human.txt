@@ -3,7 +3,7 @@ hisat2 = /usr/bin/hisat2
 lastal = /usr/bin/lastal
 lastsp = /usr/bin/last-split
 mfcv = /usr/bin/maf-convert
-reformat = /opt/bbmap/reformat.sh
+reformat = /usr/bin/bbmap/reformat.sh
 samtools = /usr/bin/samtools
 sambamba = /usr/bin/sambamba
 b2fq = bedtools bamtofastq
@@ -13,7 +13,7 @@ sortBed = bedtools sort
 clusterBed = bedtools cluster
 randomBed = bedtools random
 groupBy = bedtools groupby
-bg2bw = /usr/bin/bedGraphToBigWig
+bg2bw = /bin/bedGraphToBigWig
 
 #DATABASES
 hsindex = genome/hg19_g1k

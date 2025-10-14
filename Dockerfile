@@ -30,23 +30,24 @@ RUN wget https://github.com/arq5x/bedtools2/releases/download/v${BEDTOOLS_VERSIO
 ENV SAMBAMBA_VERSION=1.0.1
 RUN wget -O /tmp/sambamba-${SAMBAMBA_VERSION}-linux-amd64-static.gz https://github.com/biod/sambamba/releases/download/v${SAMBAMBA_VERSION}/sambamba-${SAMBAMBA_VERSION}-linux-amd64-static.gz && \
     gunzip /tmp/sambamba-${SAMBAMBA_VERSION}-linux-amd64-static.gz && \
-    mv /tmp/sambamba-${SAMBAMBA_VERSION}-linux-amd64-static /bin/sambamba && \
-    chmod +x /bin/sambamba
+    mv /tmp/sambamba-${SAMBAMBA_VERSION}-linux-amd64-static /usr/bin/sambamba && \
+    chmod +x /usr/bin/sambamba
 
 # Install BBMap (latest version)
 ENV BBMAP_VERSION=38.06
 RUN wget -qO /tmp/BBMap.tar.gz "https://sourceforge.net/projects/bbmap/files/BBMap_${BBMAP_VERSION}.tar.gz/download" && \
-    mkdir -p /opt/bbmap && \
-    tar -xzf /tmp/BBMap.tar.gz -C /opt/bbmap --strip-components=1 && \
+    mkdir -p /usr/bin/bbmap && \
+    tar -xzf /tmp/BBMap.tar.gz -C /usr/bin/bbmap --strip-components=1 && \
     rm /tmp/BBMap.tar.gz
-ENV PATH="/opt/bbmap:${PATH}"
+ENV PATH="/usr/bin/bbmap:${PATH}"
 
 # Install UCSC utilities (v369) into /bin as expected by MitoSAlt
-RUN wget -O /bin/bedGraphToBigWig http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v369/bedGraphToBigWig && \
+ENV UCSC_VERSION=v369
+RUN wget -O /bin/bedGraphToBigWig http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.${UCSC_VERSION}/bedGraphToBigWig && \
     chmod +x /bin/bedGraphToBigWig && \
-    wget -O /bin/faSomeRecords http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v369/faSomeRecords && \
+    wget -O /bin/faSomeRecords http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.${UCSC_VERSION}/faSomeRecords && \
     chmod +x /bin/faSomeRecords && \
-    wget -O /bin/faSize http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.v369/faSize && \
+    wget -O /bin/faSize http://hgdownload.soe.ucsc.edu/admin/exe/linux.x86_64.${UCSC_VERSION}/faSize && \
     chmod +x /bin/faSize
 
 # Dependencies for R visualisations
@@ -109,7 +110,7 @@ expect eof' > mitosalt_setup.exp && chmod +x mitosalt_setup.exp
 RUN ./mitosalt_setup.exp
 
 # Add MitoSAlt and tools to PATH
-ENV PATH="/opt/MitoSAlt_${MITOSALT_VERSION}:/opt/bbmap:/usr/local/bin:/bin:${PATH}"
+ENV PATH="/opt/MitoSAlt_${MITOSALT_VERSION}:/usr/bin:/usr/local/bin:/bin:${PATH}"
 
 # Set working directory so imports work
 # WORKDIR /data
