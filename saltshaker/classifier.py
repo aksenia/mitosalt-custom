@@ -176,6 +176,7 @@ class EventClassifier:
         # Calculate values needed for both criteria and reasoning (BEFORE using them anywhere)
         max_heteroplasmy = events_for_classification['perc'].max() if len(events_for_classification) > 0 else 0
         median_heteroplasmy = events_for_classification['perc'].median() if len(events_for_classification) > 0 else 0
+
         mixed_types_significant = significant_del_count > 0 and significant_dup_count > 0 and min(significant_del_count, significant_dup_count) >= MIN_MIXED_TYPE_COUNT
         mixed_types_all = del_count > 0 and dup_count > 0 and min(del_count, dup_count) >= MIN_MIXED_TYPE_COUNT
         many_events = len(events_for_classification) > TOTAL_EVENT_COUNT_THRESHOLD
@@ -187,7 +188,7 @@ class EventClassifier:
                 reason_str = "No events detected"
             else:
                 classification = "No significant events" 
-                reason_str = f"only low-level events (<5% heteroplasmy): {len(events_for_classification)} events below significance threshold"
+                reason_str = f"only low-level events (<{SIGNIFICANT_HETEROPLASMY_THRESHOLD:.0f}% heteroplasmy): {len(events_for_classification)} events below significance threshold"
                 if blacklist_filtered_count > 0:
                     reason_str += f" [excluded {blacklist_filtered_count} blacklist-crossing events]"
             
@@ -305,8 +306,8 @@ class EventClassifier:
             if max_heteroplasmy >= HIGH_HETEROPLASMY_THRESHOLD:
                 reasons.append(f"max heteroplasmy {max_heteroplasmy:.1f}%")
             if significant_del_count + significant_dup_count <= MAJOR_EVENT_COUNT_THRESHOLD:
-                reasons.append(f"few significant events ({significant_del_count} del, {significant_dup_count} dup ≥5%)")
-            
+                reasons.append(f"few significant events ({significant_del_count} del, {significant_dup_count} dup ≥{SIGNIFICANT_HETEROPLASMY_THRESHOLD:.0f}%)")
+
             # Add group-based spatial analysis
             if dominant_group_events > 0:
                 group_percentage = (dominant_group_events / len(events_for_classification)) * 100
