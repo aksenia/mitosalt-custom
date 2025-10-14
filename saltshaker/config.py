@@ -17,10 +17,10 @@ class ClassificationConfig:
     # ============================================================
     # HETEROPLASMY THRESHOLDS
     # ============================================================
-    HIGH_HETEROPLASMY_THRESHOLD: float = 30.0
+    HIGH_HETEROPLASMY_THRESHOLD: float = 20.0
     """Threshold for pathogenic significance (≥30%)"""
     
-    SIGNIFICANT_HETEROPLASMY_THRESHOLD: float = 1.5
+    SIGNIFICANT_HETEROPLASMY_THRESHOLD: float = 1.0
     """Above technical noise, reliable detection (≥5%)"""
     
     LOW_HETEROPLASMY_THRESHOLD: float = 1.0
@@ -32,10 +32,10 @@ class ClassificationConfig:
     MAJOR_EVENT_COUNT_THRESHOLD: int = 3
     """Maximum high-het events for single pattern (≤3)"""
     
-    TOTAL_EVENT_COUNT_THRESHOLD: int = 20
+    TOTAL_EVENT_COUNT_THRESHOLD: int = 10
     """Minimum total events for multiple pattern (>20)"""
     
-    MIN_EVENTS_NO_DOMINANT: int = 10
+    MIN_EVENTS_NO_DOMINANT: int = 5
     """Events without dominant high-het for multiple pattern"""
     
     MIN_MIXED_TYPE_COUNT: int = 3
@@ -47,7 +47,7 @@ class ClassificationConfig:
     MIN_HIGH_HET_BOTH_TYPES: int = 2
     """High-het events of both types for multiple"""
     
-    MIN_SCATTERED_EVENTS: int = 5
+    MIN_SCATTERED_EVENTS: int = 4
     """Minimum events for scattered pattern"""
     
     MIN_WIDE_SIGNIFICANT: int = 5
@@ -59,7 +59,7 @@ class ClassificationConfig:
     # ============================================================
     # SPATIAL CLUSTERING THRESHOLDS
     # ============================================================
-    CLUSTER_RADIUS: int = 400
+    CLUSTER_RADIUS: int = 600
     """Spatial grouping radius (bp)"""
     
     MIN_CLUSTER_SIZE: int = 2
@@ -86,10 +86,10 @@ class ClassificationConfig:
     # ============================================================
     # CLUSTERING DENSITY THRESHOLDS
     # ============================================================
-    HIGH_CLUSTERING_DENSITY: float = 5.0
+    HIGH_CLUSTERING_DENSITY: float = 3.0
     """High clustering density (>5 events/kb)"""
     
-    LOW_CLUSTERING_DENSITY: float = 2.0
+    LOW_CLUSTERING_DENSITY: float = 1.0
     """Low clustering density (<2 events/kb)"""
     
     MIN_GROUPS_FOR_MULTIPLE: int = 3
