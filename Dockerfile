@@ -65,10 +65,11 @@ WORKDIR /opt/MitoSAlt_${MITOSALT_VERSION}
 
 # Correct the paths in the analysis and plotting R script to work with container
 RUN sed -i \
-    -e 's|plotfile<-paste("plot/",filename,".pdf",sep="")|plotfile<-paste("/output/plot/",filename,".pdf",sep="")|' \
-    -e 's|textfile<-paste("indel/",filename,".tsv",sep="")|textfile<-paste("/output/indel/",filename,".tsv",sep="")|' \
+    -e "s|plotfile<-paste(\"plot/\",filename,\".pdf\",sep=\"\")|plotfile<-paste(\"/output/plot/\",filename,\".pdf\",sep=\"\")|" \
+    -e "s|textfile<-paste(\"indel/\",filename,\".tsv\",sep=\"\")|textfile<-paste(\"/output/indel/\",filename,\".tsv\",sep=\"\")|" \
     /opt/MitoSAlt_${MITOSALT_VERSION}/delplot.R
-RUN sed -i 's#delplot\.R#/opt/MitoSAlt_${MITOSALT_VERSION}/delplot.R#g'  MitoSAlt${MITOSALT_VERSION}.pl
+
+RUN sed -i "s#delplot\.R#/opt/MitoSAlt_${MITOSALT_VERSION}/delplot.R#g" MitoSAlt${MITOSALT_VERSION}.pl
 
 # Copy saltshaker package source code
 COPY saltshaker/ /opt/MitoSAlt_${MITOSALT_VERSION}/saltshaker/
