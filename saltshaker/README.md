@@ -7,7 +7,7 @@ A Python package for classifying and visualizing mitochondrial structural varian
 SaltShaker is a Python port and extension of the original MitoSAlt `delplot.R` visualization script. The package provides three modular commands for a flexible analysis workflow:
 
 - **Event calling**: Direct Python port of the original R script's deletion/duplication classification logic
-- **Pattern classification**: Enhanced analysis distinguishing patient-like single events from mouse model-like multiple events
+- **Pattern classification**: Rule-based decision tree to distinguish single from mouse multiple type of events
 - **Visualization**: Circular genome plotting based on the original R script visualization with spatial grouping enhancements
 
 The core deletion/duplication classification algorithm (`saltshaker call`) faithfully replicates the original R implementation. The additional pattern classification (`saltshaker classify`) extends this with literature-based criteria to distinguish between pathogenic single high-heteroplasmy events and mtDNA maintenance defect patterns following [Basu et al. PLoS Genetics 2020](https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1009242).
@@ -50,7 +50,7 @@ saltshaker call \
 
 **Algorithm (from original R script):**
 
-The classification logic is a direct port of the original MitoSAlt R implementation:
+The  logic is a direct port of the original MitoSAlt R implementation:
 
 1. **Data loading**: Parses cluster and breakpoint files, merges data to link clusters with D-loop crossing information
 2. **Deletion size calculation**: Handles circular genome wraparound for events crossing position 1
@@ -77,49 +77,47 @@ This approach identifies the arc complementary to the actual structural change, 
 **Extended analysis beyond the original R script.** Performs spatial grouping and classifies the overall pattern as Single or Multiple based on heteroplasmy distribution and event clustering.
 
 **Usage:**
-
 ```bash
 saltshaker classify \
     -i sample.intermediate.tsv \     # input from call step
-    -o sample_summary.txt \          # analysis summary
+    -o sample.txt \                  # analysis summary
     -b blacklist.bed \               # optional: blacklist regions
     --vcf                            # optional: output VCF format
 ```
 
 **Outputs:**
-
-- `sample_summary.txt` - Detailed analysis report with classification reasoning
-- `sample_summary.classified.tsv` - Events with spatial group assignments (for plotting)
-- `sample_summary.vcf` - VCF format with groups and heteroplasmy (if `--vcf` specified)
+- `sample.txt` - Detailed analysis report with classification reasoning
+- `sample.classified.intermediate.tsv` - Events with spatial group assignments (for plotting)
+- `sample.vcf` - VCF format with groups and heteroplasmy (if `--vcf` specified)
 
 **Classification criteria:**
 
-**Single Pattern** (patient-like):
+**Single pattern** (patient-like):
 
-- One or few high-heteroplasmy events (≥30%)
-- Dominant cluster with high total heteroplasmy
-- Spatially clustered events
+- One or few high-heteroplasmy events (≥20%)
+- Dominant spatial group (≥70% of events)
+- Few total events (≤10)
 - Consistent with pathogenic single deletion/duplication
 
-**Multiple Pattern** (mouse model-like):
+**Multiple pattern** (mouse model-like):
 
-- Many low-heteroplasmy events (<30%)
-- High event count (typically >20)
-- Dispersed spatial distribution
+- Many events (>10)
+- Dispersed spatial distribution (no dominant group)
+- No high-heteroplasmy events
 - Consistent with mtDNA maintenance defects
 
 **Spatial grouping:**
-Events within 400bp (configurable) are grouped together. 
+Events within 600bp (configurable) are grouped together. All classification thresholds can be customized via CLI (see `saltshaker classify --help`).
 
 ### 3. `saltshaker plot` - Visualization
 
-Generates circular genome plots based on the original R script visualization with enhanced spatial grouping. Creates publication-quality figures showing spatial distribution of events with color-coded heteroplasmy intensity.
+Generates circular genome plots based on the original R script visualization with enhanced spatial grouping. 
 
 **Usage:**
 
 ```bash
 saltshaker plot \
-    -i sample_summary.classified.intermediate.tsv \  # input from classify
+    -i sample.classified.intermediate.tsv \         # input from classify
     -o sample_plot.png \                            # output plot
     -b blacklist.bed \                              # optional: blacklist regions
     --figsize 16 10                                 # figure size (width height)
@@ -230,53 +228,50 @@ Analysis report including:
 saltshaker call \
     -g 16569 --ori-h-start 16081 --ori-h-end 407 \
     --ori-l-start 5730 --ori-l-end 5763 \
-    -c sample.cluster -p sample.breakpoint -r reference.fasta \
+    -c sample.cluster -p sample.breakpoint \
+    -r reference.fasta \
     -o results/sample.tsv \
     -H 0.01 -f 15 -b blacklist.bed
 
 # Step 2: Classify pattern and perform spatial grouping (extended analysis)
 saltshaker classify \
     -i results/sample.intermediate.tsv \
-    -o results/sample_summary.txt \
+    -o results/sample.txt \
     -b blacklist.bed --vcf
 
 # Step 3: Generate visualization (enhanced R script plotting)
 saltshaker plot \
-    -i results/sample_summary.classified.tsv \
+    -i results/sample.classified.tsv \
     -o results/sample_plot.png \
     -b blacklist.bed --figsize 16 10
 ```
 
 ## Configuration
 
-Default thresholds are defined in `saltshaker/config.py`:
+Default classification thresholds are defined in `saltshaker/config.py`:
 
 ```python
-# Classification thresholds
-HIGH_HETEROPLASMY_THRESHOLD = 0.30      # 30%
-SIGNIFICANT_HETEROPLASMY_THRESHOLD = 0.05  # 5%
-CLUSTER_RADIUS = 500                     # bp
-MIN_CLUSTER_SIZE = 1
+# Heteroplasmy thresholds
+HIGH_HET_THRESHOLD = 20.0        # High heteroplasmy threshold (%), --high-het
+NOISE_THRESHOLD = 1.0            # Noise threshold (%), --noise
 
-# Scoring weights for pattern classification
-SINGLE_HIGH_HET_WEIGHT = 0.35
-SINGLE_DOMINANT_GROUP_WEIGHT = 0.30
-SINGLE_LOW_COUNT_WEIGHT = 0.20
-SINGLE_CLUSTERING_WEIGHT = 0.15
+# Spatial clustering
+CLUSTER_RADIUS = 600             # Spatial grouping radius (bp), --radius
+MIN_CLUSTER_SIZE = 2             # Minimum events per cluster (not configurable via CLI)
 
-MULTIPLE_COUNT_WEIGHT = 0.35
-MULTIPLE_LOW_HET_WEIGHT = 0.30
-MULTIPLE_DISPERSION_WEIGHT = 0.20
-MULTIPLE_NO_DOMINANT_WEIGHT = 0.15
+# Pattern classification
+MULTIPLE_EVENT_THRESHOLD = 10    # Event count for Multiple pattern, --multiple-threshold
+DOMINANT_GROUP_FRACTION = 0.70   # Fraction for dominant group (70%), --dominant-fraction
 ```
 
-These can be customized by modifying the configuration file.
+These can be customized by modifying the configuration file or via CLI arguments (see `saltshaker classify --help`).
 
 ## Command reference
 
 ### Global options
 
 All commands support:
+
 - `-h, --help`: Show help message
 - `-b, --blacklist FILE`: BED file with regions to exclude
 
@@ -308,7 +303,13 @@ All commands support:
 
 **Optional:**
 
+- `-b, --blacklist FILE`: BED file with regions to exclude
 - `--vcf`: Also output VCF format
+- `--high-het FLOAT`: High heteroplasmy threshold % (default: 20)
+- `--noise FLOAT`: Noise threshold % (default: 1)
+- `--radius INT`: Spatial clustering radius bp (default: 600)
+- `--multiple-threshold INT`: Event count for Multiple pattern (default: 10)
+- `--dominant-fraction FLOAT`: Fraction for dominant group (default: 0.70)
 
 ### `plot` command
 
@@ -350,4 +351,10 @@ saltshaker/
     ├── readers.py       # File input (blacklist BED files)
     ├── writers.py       # TSV and summary output
     └── vcf_writer.py    # VCF format output
+docs/
+└── classification_algorithm.md  # Detailed classification algorithm documentation
 ```
+
+## Documentation
+
+- [Classification algorithm](docs/classification_algorithm.md) - Detailed explanation of the Single vs Multiple pattern classification logic

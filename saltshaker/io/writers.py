@@ -303,9 +303,8 @@ class SummaryWriter:
             f.write("Heteroplasmy distribution (literature-based thresholds):\n")
             f.write("-" * 55 + "\n")
             if len(events) > 0:
-                f.write(f"High heteroplasmy events (≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('high_het_count', 0)}\n")
-                f.write(f"Medium heteroplasmy events ({cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}-{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('medium_het_count', 0)}\n")
-                f.write(f"Low heteroplasmy events (<{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}%): {criteria.get('low_het_count', 0)}\n")
+                f.write(f"High heteroplasmy events (≥{cfg.HIGH_HET_THRESHOLD:.0f}%): {criteria.get('high_het_count', 0)}\n")
+                f.write(f"Low heteroplasmy events (<{cfg.NOISE_THRESHOLD:.0f}%): {criteria.get('low_het_count', 0)}\n")
                 f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f}%\n")
                 f.write(f"Median heteroplasmy: {criteria.get('median_heteroplasmy', 0):.3f}%\n")
             else:
@@ -365,11 +364,11 @@ class SummaryWriter:
                 f.write("- Score = count of criteria met for each pattern type\n")
                 f.write("\n")
                 f.write("Biological thresholds used:\n")
-                f.write(f"- High heteroplasmy threshold: ≥{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% (pathogenic significance)\n")
-                f.write(f"- Significance threshold: ≥{cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD:.0f}% (above noise level)\n")
-                f.write(f"- Low heteroplasmy threshold: <{cfg.LOW_HETEROPLASMY_THRESHOLD:.0f}% (likely artifacts)\n")
-                f.write(f"- Multiple event threshold: >{cfg.TOTAL_EVENT_COUNT_THRESHOLD} events (mouse model pattern)\n")
-                f.write(f"- Major event threshold: ≤{cfg.MAJOR_EVENT_COUNT_THRESHOLD} high-het events (single pattern)\n")
+                f.write(f"- High heteroplasmy threshold: ≥{cfg.HIGH_HET_THRESHOLD:.0f}% (pathogenic significance)\n")
+                f.write(f"- Significance threshold: ≥{cfg.NOISE_THRESHOLD:.0f}% (above noise level)\n")
+                f.write(f"- Low heteroplasmy threshold: <{cfg.NOISE_THRESHOLD:.0f}% (likely artifacts)\n")
+                f.write(f"- Multiple event threshold: >{cfg.MULTIPLE_EVENT_THRESHOLD} events (mouse model pattern)\n")
+                f.write(f"- Dominant group threshold: ≥{cfg.DOMINANT_GROUP_FRACTION*100:.0f}% of events in main group\n")
                 f.write(f"- Spatial clustering radius: {cfg.CLUSTER_RADIUS}bp (biologically relevant)\n")
                 f.write("\n")
             
@@ -381,7 +380,7 @@ class SummaryWriter:
                 f.write("- Single pathogenic deletion/duplication\n")
                 f.write("- Classical mitochondrial disease patient profile\n")
                 f.write("- Possible accompanying low-level artifacts\n")
-                if criteria.get('max_heteroplasmy', 0) >= cfg.HIGH_HETEROPLASMY_THRESHOLD:
+                if criteria.get('max_heteroplasmy', 0) >= cfg.HIGH_HET_THRESHOLD:
                     f.write("- High heteroplasmy suggests functional impact\n")
             elif classification == "Multiple":
                 f.write("Pattern consistent with:\n")
@@ -401,7 +400,7 @@ class SummaryWriter:
             f.write("- Basu et al. PLoS Genet 2020 (MitoSAlt methodology)\n")
             f.write("- Patient samples: single high-heteroplasmy events (>35%)\n")
             f.write("- Mouse models: multiple low-heteroplasmy events (<3%)\n")
-            f.write(f"- Clinical thresholds: >{cfg.HIGH_HETEROPLASMY_THRESHOLD:.0f}% for pathogenic significance\n")
+            f.write(f"- Clinical thresholds: >{cfg.HIGH_HET_THRESHOLD:.0f}% for pathogenic significance\n")
         
         print(f"Enhanced analysis summary saved to {output_file}")
         print(f"Event classification: {classification} ({reason})")

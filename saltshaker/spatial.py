@@ -49,18 +49,23 @@ class SpatialGroupAnalyzer:
         if radius is None:
             radius = self.config.CLUSTER_RADIUS
         if high_het_threshold is None:
-            high_het_threshold = self.config.HIGH_HETEROPLASMY_THRESHOLD
+            high_het_threshold = self.config.HIGH_HET_THRESHOLD
         if sig_het_threshold is None:
-            sig_het_threshold = self.config.SIGNIFICANT_HETEROPLASMY_THRESHOLD
+            sig_het_threshold = self.config.NOISE_THRESHOLD
         if min_group_size is None:
             min_group_size = self.config.MIN_CLUSTER_SIZE
         
         if len(events_df) == 0:
             return self._empty_grouping_result(events_df)
 
+        print(f"DEBUG Spatial Grouping: {len(events_df)} events, radius={radius}bp, min_size={min_group_size}")
+
+
         # Separate by event type first to avoid mixed groups
         del_events = events_df[events_df['final.event'] == 'del'].copy()
         dup_events = events_df[events_df['final.event'] == 'dup'].copy()
+
+        print(f"DEBUG: {len(del_events)} deletions, {len(dup_events)} duplications")
         
         # Group each type separately
         del_groups = self._group_events_by_type(del_events, radius, 'del') if len(del_events) > 0 else []
@@ -168,8 +173,8 @@ class SpatialGroupAnalyzer:
             'median_size': np.median(sizes),  
             'max_size': max(sizes),          
             'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
-            'high_het_count': sum(1 for h in heteroplasmy_values if h >= cfg.HIGH_HETEROPLASMY_THRESHOLD),
-            'significant_count': sum(1 for h in heteroplasmy_values if h >= cfg.SIGNIFICANT_HETEROPLASMY_THRESHOLD),
+            'high_het_count': sum(1 for h in heteroplasmy_values if h >= cfg.HIGH_HET_THRESHOLD),
+            'significant_count': sum(1 for h in heteroplasmy_values if h >= cfg.NOISE_THRESHOLD),
             'events': group
         }
         
