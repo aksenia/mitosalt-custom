@@ -4,6 +4,7 @@ Circular Visualizer
 Creates circular genome plots for mitochondrial structural alterations.
 """
 
+from asyncio import events
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -68,7 +69,10 @@ class CircularPlotter:
         
         # Order events by group for better visualization
         if 'group' in events.columns:
-            dat = dat.sort_values(['group', 'value'], ascending=[True, False]).reset_index(drop=True)
+            # Add temporary sort key column
+            dat['_sort_key'] = dat['group'].apply(lambda g: self.group_sort_key(g))
+            dat = dat.sort_values(['_sort_key', 'value'], ascending=[True, False]).reset_index(drop=True)
+            dat = dat.drop(columns=['_sort_key'])
         
         # Enhanced blacklist crossing detection      
         dat['blacklist_crossing'] = False
