@@ -159,9 +159,10 @@ class CircularPlotter:
                 
                 if assignment['shared']:
                     for idx in group_indices:
-                        data.loc[idx, 'radius'] = assignment['radius']
+                        data.loc[idx, 'radius'] = max(20, assignment['radius'])  # Add minimum bound to prevent overflow to the boundary
                 else:
                     band_top, band_bottom = assignment['band_top'], assignment['band_bottom']
+                    band_bottom = max(20, band_bottom)  # Ensure minimum radius
                     for i, idx in enumerate(group_indices):
                         test_radius = band_top
                         while test_radius >= band_bottom:
@@ -172,7 +173,7 @@ class CircularPlotter:
                                 break
                             test_radius -= 2
                         else:
-                            data.loc[idx, 'radius'] = band_bottom
+                            data.loc[idx, 'radius'] = max(20, band_bottom)  # Add minimum bound
             
             return data
 
@@ -229,12 +230,14 @@ class CircularPlotter:
                 inner_data = assign_radii_by_type(inner_data, base_radius=inner_max, radius_diff=6)
             if len(outer_data) > 0:
                 outer_data = assign_radii_by_type(outer_data, base_radius=base_radius, radius_diff=6)
+
+            circle_radius = base_radius + 12  # Circle drawn slightly outside events
             
             # Return in correct order
             if outer_type == 'dup':
-                return inner_data, outer_data, blacklist_radius, base_radius
+                return inner_data, outer_data, blacklist_radius, circle_radius
             else:
-                return outer_data, inner_data, blacklist_radius, base_radius
+                return outer_data, inner_data, blacklist_radius, circle_radius
 
         # MAIN PROCESSING
         # Separate data by type
@@ -261,7 +264,7 @@ class CircularPlotter:
         
         # Create figure
         fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.9])
+        ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
         ax.set_ylim(0, dynamic_radius + 30)
         ax.set_theta_zero_location('N')
         ax.set_theta_direction(-1)
@@ -402,20 +405,23 @@ class CircularPlotter:
                                 alpha=0.9, edgecolor=label_color, linewidth=0.8))
 
         # LEGENDS IN SEPARATE AREAS OF THE FIGURE                 
-        # 1. EVENT COUNT SUMMARY - Top left area
-        count_text = f"Del: {del_count}  Dup: {dup_count}\n"
-        if blacklist_regions:
-            count_text += f"BL-crossing Del: {bl_del_count}\nBL-crossing Dup: {bl_dup_count}"
-        
-        fig.text(0.02, 0.85, count_text, fontsize=11, weight='bold',
+        # 1. EVENT COUNT SUMMARY - Top left area with colored BL text
+        fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
+                fontsize=13, weight='bold',
                 bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.9, edgecolor='gray'),
                 verticalalignment='top')
+
+        if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
+            # Add BL-crossing text in green below main counts
+            fig.text(0.06, 0.8, f"BL-crossing Del: {bl_del_count}\nBL-crossing Dup: {bl_dup_count}", 
+                    fontsize=13, weight='bold', color=(0.2, 0.8, 0.2),
+                    verticalalignment='top')
         
         # 2. SEPARATE GRADIENT LEGENDS - independently scaled
-        legend_x = 0.05
-        legend_y = 0.4
-        legend_height = 0.25
-        legend_width = 0.03
+        legend_x = 0.08
+        legend_y = 0.5
+        legend_height = 0.35
+        legend_width = 0.045
 
         # Create separate gradient bars
         n_steps = 100
@@ -458,54 +464,28 @@ class CircularPlotter:
         # Labels and values
         del_label_x = legend_x + bar_width / 2
         fig.text(del_label_x, legend_y + legend_height/2 + 0.01, "Del", 
-                fontsize=8, ha='center', weight='bold', color='blue')
+                fontsize=9, ha='center', weight='bold', color='blue')
 
         dup_label_x = legend_x + bar_width + bar_gap + bar_width / 2
         fig.text(dup_label_x, legend_y + legend_height/2 + 0.01, "Dup", 
-                fontsize=8, ha='center', weight='bold', color='red')
+                fontsize=9, ha='center', weight='bold', color='red')
 
         # Separate value labels for each scale
         if len(del_events) > 0:
             for pos, val in [(1, del_max), (0, del_min)]:
                 y_pos = legend_y - legend_height/2 + pos * legend_height
-                fig.text(legend_x - 0.02, y_pos, f"{val:.1f}%", 
-                        fontsize=8, va='center', ha='right', color='blue')
+                fig.text(legend_x - 0.015, y_pos, f"{val:.1f}%", 
+                        fontsize=10, va='center', ha='right', color='blue')
 
         if len(dup_events) > 0:
             for pos, val in [(1, dup_max), (0, dup_min)]:
-                y_pos = legend_y - legend_height/2 + pos * legend_height  
-                fig.text(legend_x + legend_width + 0.01, y_pos, f"{val:.1f}%", 
-                        fontsize=8, va='center', color='red')
+                y_pos = legend_y - legend_height/2 + pos * legend_height
+                fig.text(legend_x + legend_width + 0.015, y_pos, f"{val:.1f}%",
+                        fontsize=10, va='center', color='red')
 
         fig.text(legend_x + legend_width/2, legend_y - legend_height/2 - 0.03, 
-                "Heteroplasmy (%)", fontsize=11, weight='bold', ha='center')
-        
-        # 3. Blacklist crossing legend (if needed) - Left bottom
-        # Compute top of Del/Dup bars including their labels
-        bars_top_y = legend_y + legend_height/2        # top of bars
-        label_offset = 0.04                            # offset used for Del/Dup labels
-        bl_gap = 0.02                                  # extra gap between bars+labels and rectangle
+                "Heteroplasmy (%)", fontsize=12, weight='bold', ha='center')
 
-        # New position for Blacklist rectangle
-        bl_x = 0.02
-        bl_y = bars_top_y + label_offset + bl_gap      # just above bars/labels
-        bl_width = 0.1
-        bl_height = 0.05
-
-        if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
-            bl_rect = plt.Rectangle(
-                (bl_x, bl_y), bl_width, bl_height,
-                facecolor=(0.2, 0.8, 0.2), alpha=0.6,
-                transform=fig.transFigure
-            )
-            fig.patches.append(bl_rect)
-
-            # Label inside rectangle (centered)
-            fig.text(
-                bl_x + bl_width/2, bl_y + bl_height/2,
-                "Blacklist\ncrossing",
-                fontsize=9, ha='center', va='center', weight='bold'
-            )
         
         ax.grid(False)
         ax.set_xticklabels([])
@@ -515,7 +495,7 @@ class CircularPlotter:
         if blacklist_regions:
             title += f' (BL: {len(blacklist_regions)} regions)'
         
-        fig.suptitle(title, fontsize=15, weight='bold', y=0.95)
+        fig.suptitle(title, fontsize=15, weight='bold', y=0.98)
         
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.close()
