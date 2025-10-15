@@ -205,8 +205,14 @@ class CircularPlotter:
             dup_frac = (dup_space_needed / total_group_space) * available_frac
             
             # Determine outer vs inner based on group numbers
-            del_min_group = int(min(dat_del['group'].str[1:]).replace('', '999')) if len(dat_del) > 0 else 999
-            dup_min_group = int(min(dat_dup['group'].str[1:]).replace('', '999')) if len(dat_dup) > 0 else 999
+            # Extract minimum group number for ordering (handles G1, BL1, etc.)
+            def extract_group_num(group_id):
+                """Extract numeric part from group ID"""
+                match = re.match(r'^[A-Z]+(\d+)$', str(group_id))
+                return int(match.group(1)) if match else 999
+
+            del_min_group = min([extract_group_num(g) for g in dat_del['group'].unique()]) if len(dat_del) > 0 else 999
+            dup_min_group = min([extract_group_num(g) for g in dat_dup['group'].unique()]) if len(dat_dup) > 0 else 999
             
             if dup_min_group < del_min_group:
                 outer_frac, inner_frac = dup_frac, del_frac
