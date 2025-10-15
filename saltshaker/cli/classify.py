@@ -53,7 +53,7 @@ def run(args):
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Generate filenames
-    input_file = input_dir / f"{args.prefix}.saltshaker_call.tsv"
+    input_file = input_dir / f"{args.prefix}.saltshaker_call_metadata.tsv"
     summary_file = output_dir / f"{args.prefix}.saltshaker_classify.txt"
     classified_file = output_dir / f"{args.prefix}.saltshaker_classify_metadata.tsv"
     vcf_file = output_dir / f"{args.prefix}.vcf"
