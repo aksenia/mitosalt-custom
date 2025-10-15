@@ -37,13 +37,15 @@ DOMINANT_GROUP_FRACTION = 0.70     # Fraction in dominant group for Single (70%)
 
 ```bash
 saltshaker classify \
-    -i events.tsv \
-    -o summary.txt \
+    --prefix sample \.      # prefix used in call command
+    --input-dir results/ \  # outputs folder from call command
     --high-het 20 \
     --noise 1.0 \
     --radius 600 \
     --multiple-threshold 10 \
-    --dominant-fraction 0.70
+    --dominant-fraction 0.70 \
+    -b blacklist.bed \    # will exclude blacklist-crossing events from classification
+    --vcf
 ```
 
 ---

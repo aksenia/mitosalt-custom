@@ -31,22 +31,24 @@ pip install -e .
 
 ```bash
 saltshaker call \
-    -g 16569 \                           # genome length
-    --ori-h-start 16081 --ori-h-end 407 \  # heavy strand origin
-    --ori-l-start 5730 --ori-l-end 5763 \  # light strand origin
-    -c sample.cluster \                  # cluster file from MitoSAlt
-    -p sample.breakpoint \               # breakpoint file from MitoSAlt
-    -r reference.fasta \                 # mitochondrial reference genome
-    -o sample.tsv \                      # output display TSV
-    -H 0.01 \                            # heteroplasmy threshold
-    -f 15 \                              # flanking sequence size (bp)
-    -b blacklist.bed                     # optional: regions to exclude
+    --prefix sample \                       # Sample identifier
+    --output-dir results/ \                 # Output directory
+    -c sample.cluster \                     # cluster file from MitoSAlt
+    -p sample.breakpoint \                  # breakpoint file from MitoSAlt
+    -r reference.fasta \                    # mitochondrial reference genome
+    -g 16569 \                              # genome length
+    --ori-h-start 16081 --ori-h-end 407 \   # heavy strand origin
+    --ori-l-start 5730 --ori-l-end 5763 \   # light strand origin
+    -H 0.01 \                               # heteroplasmy threshold
+    -f 15 \                                 # flanking sequence size (bp)
+    -b blacklist.bed                        # optional: regions to exclude
 ```
 
 **Outputs:**
 
-- `sample.tsv` - Human-readable results matching original R script output format
-- `sample.intermediate.tsv` - Internal format for downstream processing (classify/plot)
+- `results/sample.saltshaker_call.tsv` - Human-readable results matching original R script output format
+- `results/sample.saltshaker_call_metadata.tsv` - Metadata for downstream processing (classify/plot)
+
 
 **Algorithm (from original R script):**
 
@@ -77,18 +79,22 @@ This approach identifies the arc complementary to the actual structural change, 
 **Extended analysis beyond the original R script.** Performs spatial grouping and classifies the overall pattern as Single or Multiple based on heteroplasmy distribution and event clustering.
 
 **Usage:**
+
 ```bash
 saltshaker classify \
-    -i sample.intermediate.tsv \     # input from call step
-    -o sample.txt \                  # analysis summary
-    -b blacklist.bed \               # optional: blacklist regions
-    --vcf                            # optional: output VCF format
+    --prefix sample \               # Sample identifier (must match one run in call command)
+    --input-dir results/ \          # Input directory with call output
+    --output-dir results/ \         # Output directory (default: input-dir)
+    -b blacklist.bed \              # optional: blacklist regions
+    --vcf                           # optional: output VCF format
 ```
 
 **Outputs:**
-- `sample.txt` - Detailed analysis report with classification reasoning
-- `sample.classified.intermediate.tsv` - Events with spatial group assignments (for plotting)
-- `sample.vcf` - VCF format with groups and heteroplasmy (if `--vcf` specified)
+
+- `results/sample.saltshaker_classify.txt` - Detailed analysis report with classification reasoning
+- `results/sample.saltshaker_classify_metadata.tsv` - Events with spatial group assignments (for plotting)
+- `results/sample.vcf` - VCF format with groups and heteroplasmy (if `--vcf` specified)
+
 
 **Classification criteria:**
 
@@ -117,20 +123,16 @@ Generates circular genome plots based on the original R script visualization wit
 
 ```bash
 saltshaker plot \
-    -i sample.classified.intermediate.tsv \         # input from classify
-    -o sample_plot.png \                            # output plot
-    -b blacklist.bed \                              # optional: blacklist regions
-    --figsize 16 10                                 # figure size (width height)
+    --prefix sample \              # Sample identifier (must match classify command)
+    --input-dir results/ \          # Input directory with classify output
+    --output-dir results/plot/ \   # Output directory (default: input-dir)
+    -b blacklist.bed \              # optional: blacklist regions
+    --figsize 16 10                 # optional: figure size (width height)
 ```
 
 **Output:**
 
-- Circular genome visualization with:
-  - Blue arcs: deletions
-  - Red arcs: duplications  
-  - Color intensity: heteroplasmy level
-  - Spatial grouping: events grouped by proximity
-  - Blacklisted regions: marked if provided
+- `results/plot/sample.saltshaker.png` - Circular genome visualization
 
 **Visualization features from original R script:**
 
@@ -177,9 +179,8 @@ saltshaker plot \
 
 ## Output formats
 
-### TSV files
+### Display TSV (`{prefix}.saltshaker_call.tsv`)
 
-**Display TSV** (`sample.tsv`):
 Human-readable format matching original R script output with columns:
 
 - `sample`: Sample identifier
@@ -193,13 +194,24 @@ Human-readable format matching original R script output with columns:
 - `blacklist_crossing`: Flag for blacklist overlap
 - `seq1`, `seq2`, `seq`: Flanking sequences and microhomology
 
-**Intermediate TSV** (`.intermediate.tsv`):
+### Metadata files
+
+**Call metadata** (`{prefix}.saltshaker_call_metadata.tsv`):
 Internal format preserving all columns for downstream processing. Contains metadata header with genome length.
 
-**Classified TSV** (`.classified.tsv`):
-Intermediate format with additional `group` column for spatial group assignments.
+**Classify metadata** (`{prefix}.saltshaker_classify_metadata.tsv`):
+Internal format with additional `group` column for spatial group assignments. Used by plot command.
 
-### VCF format
+### Analysis summary (`{prefix}.saltshaker_classify.txt`)
+
+Human-readable analysis report including:
+
+- Pattern classification (Single/Multiple) with reasoning
+- Event statistics and heteroplasmy distribution
+- Spatial clustering metrics
+- Classification criteria scores
+
+### VCF format (`{prefix}.vcf`)
 
 Standard VCF 4.3 format with structural variant fields:
 
@@ -212,38 +224,59 @@ Standard VCF 4.3 format with structural variant fields:
 - `DLOOP`: Flag for D-loop crossing
 - `BLCROSS`: Flag for blacklist crossing
 
-### Summary text
-
-Analysis report including:
-
-- Pattern classification (Single/Multiple) with reasoning
-- Event statistics and heteroplasmy distribution
-- Spatial clustering metrics
-- Classification criteria scores
+### Circular Plot (`{prefix}.saltshaker.png`)
 
 ## Complete workflow example
+
+**Single-sample pipeline:**
 
 ```bash
 # Step 1: Call events from MitoSAlt output (R script port)
 saltshaker call \
+    --prefix sample1 \
+    --output-dir results/ \
+    -c sample1.cluster -p sample1.breakpoint \
+    -r reference.fasta \
     -g 16569 --ori-h-start 16081 --ori-h-end 407 \
     --ori-l-start 5730 --ori-l-end 5763 \
-    -c sample.cluster -p sample.breakpoint \
-    -r reference.fasta \
-    -o results/sample.tsv \
-    -H 0.01 -f 15 -b blacklist.bed
+    -b blacklist.bed
 
 # Step 2: Classify pattern and perform spatial grouping (extended analysis)
 saltshaker classify \
-    -i results/sample.intermediate.tsv \
-    -o results/sample.txt \
-    -b blacklist.bed --vcf
+    --prefix sample1 \
+    --input-dir results/ \
+    -b blacklist.bed 
+    --vcf
 
 # Step 3: Generate visualization (enhanced R script plotting)
 saltshaker plot \
-    -i results/sample.classified.tsv \
-    -o results/sample_plot.png \
-    -b blacklist.bed --figsize 16 10
+    --prefix sample1 \
+    --input-dir results/ \
+    --output-dir results/plot/ \
+    -b blacklist.bed
+```
+
+**Batch processing multiple samples:**
+
+```bash
+for sample in sample1 sample2 sample3; do
+    mkdir -p results/${sample}
+    # Call events
+    saltshaker call --prefix ${sample }--output-dir results/${sample} \
+        -c ${sample}.cluster -p ${sample}.breakpoint \
+        -r reference.fasta
+        -g 16569 --ori-h-start 16081 --ori-h-end 407 \
+        --ori-l-start 5730 --ori-l-end 5763 \
+        -b blacklist.bed
+    # Classify events
+    saltshaker classify --prefix ${sample} \
+        --input-dir results/${sample} \
+        -b blacklist.bed
+    # Plot events
+    saltshaker plot --prefix ${sample} \
+        --input-dir results/${sample} \
+        -b blacklist.bed
+done
 ```
 
 ## Configuration
@@ -279,30 +312,33 @@ All commands support:
 
 **Required:**
 
+- `--prefix STR`: Sample prefix for output files
+- `-c, --cluster FILE`: Cluster file from MitoSAlt
+- `-p, --breakpoint FILE`: Breakpoint file from MitoSAlt
+- `-r, --reference FILE`: Reference genome FASTA
 - `-g, --genome-length INT`: Mitochondrial genome length
 - `--ori-h-start INT`: Heavy strand origin start
 - `--ori-h-end INT`: Heavy strand origin end
 - `--ori-l-start INT`: Light strand origin start
 - `--ori-l-end INT`: Light strand origin end
-- `-c, --cluster FILE`: Cluster file from MitoSAlt
-- `-p, --breakpoint FILE`: Breakpoint file from MitoSAlt
-- `-r, --reference FILE`: Reference genome FASTA
-- `-o, --output FILE`: Output TSV file
+
 
 **Optional:**
-
+- `--output-dir DIR`: Output directory (default: .)
 - `-H, --het-limit FLOAT`: Heteroplasmy threshold (default: 0.01)
 - `-f, --flank-size INT`: Flanking sequence size in bp (default: 15)
+- `-b, --blacklist FILE`: BED file with regions to exclude
 
 ### `classify` command
 
 **Required:**
 
-- `-i, --input FILE`: Intermediate TSV from call step
-- `-o, --output FILE`: Output summary text file
+- `--prefix STR`: Sample prefix (matches call output)
+- `--input-dir DIR`: Input directory containing saltshaker_call_metadata.tsv from call
 
 **Optional:**
 
+- `--output-dir DIR`: Output directory (default: input-dir)
 - `-b, --blacklist FILE`: BED file with regions to exclude
 - `--vcf`: Also output VCF format
 - `--high-het FLOAT`: High heteroplasmy threshold % (default: 20)
@@ -315,11 +351,13 @@ All commands support:
 
 **Required:**
 
-- `-i, --input FILE`: Classified intermediate TSV from classify step
-- `-o, --output FILE`: Output PNG file
+- `--prefix STR`: Sample prefix (matches classify output)
+- `--input-dir DIR`: Input directory containing saltshaker_classify_metadata.tsv from classify
 
 **Optional:**
 
+- `--output-dir DIR`: Output directory (default: input-dir)
+- `-b, --blacklist FILE`: BED file with regions to exclude
 - `--figsize WIDTH HEIGHT`: Figure dimensions (default: 16 10)
 
 ## Dependencies

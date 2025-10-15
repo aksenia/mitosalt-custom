@@ -1,11 +1,10 @@
 """Classify subcommand - pattern classification"""
 
-import pandas as pd
 from pathlib import Path
 
 from ..config import ClassificationConfig
 from ..classifier import EventClassifier
-from ..io import BlacklistReader, write_summary, write_vcf, read_intermediate, write_intermediate
+from ..io import BlacklistReader, write_summary, write_vcf, write_intermediate, read_intermediate
 
 
 def add_parser(subparsers):
@@ -15,11 +14,15 @@ def add_parser(subparsers):
         help='Classify event pattern as Single or Multiple'
     )
     
-    # Input/Output
-    parser.add_argument('-i', '--input', required=True,
-                       help='Input intermediate TSV file from call step')
-    parser.add_argument('-o', '--output', required=True,
-                       help='Output summary text file')
+    # Sample identification
+    parser.add_argument('--prefix', required=True,
+                       help='Sample prefix (matches call output)')
+    parser.add_argument('--input-dir', required=True,
+                       help='Input directory containing .saltshaker_call_metadata.tsv from call')
+    parser.add_argument('--output-dir',
+                       help='Output directory (default: same as input-dir)')
+    
+    # Output options
     parser.add_argument('--vcf', action='store_true',
                        help='Also output classified events in VCF format')
     parser.add_argument('-b', '--blacklist',
@@ -44,9 +47,30 @@ def run(args):
     """Execute classify subcommand"""
     print("=== SaltShaker: Pattern Classification ===\n")
     
+    # Setup directories
+    input_dir = Path(args.input_dir)
+    output_dir = Path(args.output_dir) if args.output_dir else input_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate filenames
+    input_file = input_dir / f"{args.prefix}.saltshaker_call.tsv"
+    summary_file = output_dir / f"{args.prefix}.saltshaker_classify.txt"
+    classified_file = output_dir / f"{args.prefix}.saltshaker_classify_metadata.tsv"
+    vcf_file = output_dir / f"{args.prefix}.vcf"
+    
+    print(f"Sample prefix: {args.prefix}")
+    print(f"Input: {input_file}")
+    print(f"Output directory: {output_dir}")
+    
+    # Check input exists
+    if not input_file.exists():
+        raise FileNotFoundError(f"Input file not found: {input_file}\n"
+                              f"Did you run 'saltshaker call --prefix {args.prefix}' first?")
+    
     # Load events
-    events, genome_length = read_intermediate(args.input)
-    print(f"Loaded {len(events)} events from {args.input}")
+    events, genome_length = read_intermediate(str(input_file))
+    print(f"Loaded {len(events)} events")
+    print(f"Genome length: {genome_length}")
     
     # Load blacklist
     blacklist_regions = None
@@ -66,8 +90,8 @@ def run(args):
         config.MULTIPLE_EVENT_THRESHOLD = args.multiple_threshold
     if args.dominant_fraction is not None:
         config.DOMINANT_GROUP_FRACTION = args.dominant_fraction
-
-    # Print classification parameters
+    
+    # Print parameters
     print("\nClassification Parameters:")
     print(f"  High heteroplasmy threshold: {config.HIGH_HET_THRESHOLD:.1f}%")
     print(f"  Noise threshold: {config.NOISE_THRESHOLD:.1f}%")
@@ -83,37 +107,31 @@ def run(args):
         events, blacklist_regions=blacklist_regions
     )
     
-    print(f"\nClassification: {classification}")
-    print(f"Reason: {reason}")
+    print(f"Classification: {classification}")
+    print(f"Reason: {reason}\n")
     
-    # Write outputs (rest unchanged)
-    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    
+    # Write summary
     write_summary(
         events_with_groups,
-        args.output,
+        str(summary_file),
         {},
         (classification, reason, criteria, events_with_groups),
         config=config,
         blacklist_regions=blacklist_regions
     )
+    print(f"Summary: {summary_file}")
     
-    print(f"Summary saved to: {args.output}")
-    
-    # Auto-save classified intermediate
-    output_path = Path(args.output)
-    classified_intermediate = output_path.parent / f"{output_path.stem}.classified.intermediate.tsv"
-    write_intermediate(events_with_groups, str(classified_intermediate), genome_length)
-    print(f"Classified events saved to: {classified_intermediate}")
+    # Always save classified intermediate for plotting
+    write_intermediate(events_with_groups, str(classified_file), genome_length)
+    print(f"Classified events: {classified_file} (use for plot)")
     
     # Optional VCF
     if args.vcf:
-        vcf_output = str(Path(args.output).with_suffix('.vcf'))
         write_vcf(
             events_with_groups,
-            vcf_output,
+            str(vcf_file),
             genome_length,
             reference_name="chrM",
-            sample_name=Path(args.output).stem
+            sample_name=args.prefix
         )
-        print(f"VCF saved to: {vcf_output}")
+        print(f"VCF: {vcf_file}")
