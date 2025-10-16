@@ -80,40 +80,61 @@ dominant_fraction = dominant_group_size / total_events
 
 ### Step 3: Pattern classification
 
-**SINGLE PATTERN if:**
+# SaltShaker Classification Decision Tree
 
-```python
-(has_high_het_events AND few_events) 
-    OR 
-(has_high_het_events AND dominant_group_pattern)
-
-WHERE:
-    has_high_het_events = len(high_het_events) > 0
-    few_events = total_events ≤ MULTIPLE_EVENT_THRESHOLD
-    dominant_group_pattern = dominant_fraction ≥ DOMINANT_GROUP_FRACTION
+## Flow Diagram
+```
+START
+  │
+  ├─ All events < NOISE (0.7%)?
+  │   └─ YES → "No significant events" (noise only)
+  │
+  ├─ Events < MIN_CLUSTER_SIZE (2) AND max_het < HIGH_HET (20%)?
+  │   └─ YES → "No significant events" (below clinical threshold)
+  │
+  ├─ Perform spatial grouping
+  │   │
+  │   ├─ has_high_het (≥20%) AND (few_events ≤10 OR dominant_group ≥70%)?
+  │   │   └─ YES → "Single"
+  │   │
+  │   ├─ many_events (>10) OR (dispersed <70% AND no_high_het)?
+  │   │   └─ YES → "Multiple"
+  │   │
+  │   └─ AMBIGUOUS → Tiebreaker by max_het
+  │       ├─ max_het ≥ 20% → "Single"
+  │       └─ max_het < 20% → "Multiple"
+  │
+END
 ```
 
-**MULTIPLE PATTERN if:**
+## Classification outcomes
 
-```python
-many_events 
-    OR 
-(dispersed AND no_high_het)
+### No significant events
 
-WHERE:
-    many_events = total_events > MULTIPLE_EVENT_THRESHOLD
-    dispersed = dominant_fraction < DOMINANT_GROUP_FRACTION
-    no_high_het = len(high_het_events) == 0
-```
+- All events < 0.7% (noise threshold)
+- **OR** <2 events AND max heteroplasmy <20%
+- **Result:** Not clinically actionable
 
-**Ambiguous cases (tie-breaker):**
+### Single pattern
 
-```python
-IF max_heteroplasmy ≥ HIGH_HET_THRESHOLD:
-    RETURN "Single"
-ELSE:
-    RETURN "Multiple"
-```
+- High heteroplasmy (≥20%) **AND** (≤10 events **OR** ≥70% in dominant group)
+- **Result:** Pathogenic single deletion/duplication
+
+### Multiple pattern
+
+- Many events (>10) **OR** (Dispersed <70% **AND** no high-het)
+- **Result:** Complex mtDNA maintenance defect
+
+## Configuration parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HIGH_HET_THRESHOLD` | 20.0% | High heteroplasmy threshold |
+| `NOISE_THRESHOLD` | 1.0% | Noise level threshold |
+| `MIN_CLUSTER_SIZE` | 2 | Minimum events for spatial grouping |
+| `MULTIPLE_EVENT_THRESHOLD` | 10 | Threshold for "many events" |
+| `DOMINANT_GROUP_FRACTION` | 0.70 | Threshold for dominant group (70%) |
+| `CLUSTER_RADIUS` | 600 bp | Spatial grouping radius |
 
 ---
 
