@@ -4,14 +4,14 @@
 
 Based on Basu et al. PLoS Genetics 2020, the algorithm distinguishes two patterns observed in mitochondrial DNA studies:
 
-**SINGLE PATTERN (patient-like):**
+**SINGLE PATTERN:**
 
 - Few events with high heteroplasmy (≥20%)
 - One dominant deletion/duplication
 - Spatially clustered breakpoints (≥70% in one group)
 - Reflects: clonal expansion of single pathogenic event
 
-**MULTIPLE PATTERN (mouse model-like):**
+**MULTIPLE PATTERN:**
 
 - Many low-heteroplasmy events
 - Scattered across genome (multiple spatial groups)
@@ -22,16 +22,14 @@ Based on Basu et al. PLoS Genetics 2020, the algorithm distinguishes two pattern
 
 ## Classification parameters
 
-All parameters are configurable via CLI with sensible defaults:
-
-```python
-HIGH_HET_THRESHOLD = 20.0          # High heteroplasmy threshold (%)
-NOISE_THRESHOLD = 1.0              # Below this = artifacts (%)
-CLUSTER_RADIUS = 600               # Spatial grouping radius (bp)
-MIN_CLUSTER_SIZE = 2               # Minimum events per cluster
-MULTIPLE_EVENT_THRESHOLD = 10      # Event count for Multiple pattern
-DOMINANT_GROUP_FRACTION = 0.70     # Fraction in dominant group for Single (70%)
-```
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `HIGH_HET_THRESHOLD` | 20.0% | High heteroplasmy threshold |
+| `NOISE_THRESHOLD` | 1.0% | Noise level threshold |
+| `MIN_CLUSTER_SIZE` | 2 | Minimum events for spatial grouping |
+| `MULTIPLE_EVENT_THRESHOLD` | 10 | Threshold for "many events" |
+| `DOMINANT_GROUP_FRACTION` | 0.70 | Threshold for dominant group (70%) |
+| `CLUSTER_RADIUS` | 600 bp | Spatial grouping radius |
 
 **CLI usage:**
 
@@ -80,10 +78,7 @@ dominant_fraction = dominant_group_size / total_events
 
 ### Step 3: Pattern classification
 
-# SaltShaker Classification Decision Tree
-
-## Flow Diagram
-```
+```bash
 START
   │
   ├─ All events < NOISE (0.7%)?
@@ -124,17 +119,6 @@ END
 
 - Many events (>10) **OR** (Dispersed <70% **AND** no high-het)
 - **Result:** Complex mtDNA maintenance defect
-
-## Configuration parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `HIGH_HET_THRESHOLD` | 20.0% | High heteroplasmy threshold |
-| `NOISE_THRESHOLD` | 1.0% | Noise level threshold |
-| `MIN_CLUSTER_SIZE` | 2 | Minimum events for spatial grouping |
-| `MULTIPLE_EVENT_THRESHOLD` | 10 | Threshold for "many events" |
-| `DOMINANT_GROUP_FRACTION` | 0.70 | Threshold for dominant group (70%) |
-| `CLUSTER_RADIUS` | 600 bp | Spatial grouping radius |
 
 ---
 
