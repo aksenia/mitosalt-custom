@@ -2,6 +2,10 @@
 
 A Python package for classifying and visualizing mitochondrial structural variants from MitoSAlt pipeline output.
 
+<p align="center">
+  <img src="assets/logo.png" alt="SAltShaker Logo" width="250"/>
+</p>
+
 ## Overview
 
 SaltShaker is a Python port and extension of the original MitoSAlt `delplot.R` visualization script. The package provides three modular commands for a flexible analysis workflow:
