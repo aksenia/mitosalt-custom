@@ -25,7 +25,15 @@ def add_parser(subparsers):
     parser.add_argument('-b', '--blacklist',
                        help='BED file with regions to exclude')
     parser.add_argument('--figsize', nargs=2, type=int, default=[16, 10],
-                       help='Figure size (width height), default: 16 10')
+                       help='Figure size (width height), default: 16 10')    
+    parser.add_argument('--direction', choices=['clockwise', 'counterclockwise'],
+                       default='counterclockwise',
+                       help='Plot direction (default: counterclockwise, field standard)')
+    parser.add_argument('--del-color', choices=['red', 'blue'], default='blue',
+                       help='Color scheme for deletions (default: red, germline standard)')
+    parser.add_argument('--dup-color', choices=['red', 'blue'], default='red',
+                       help='Color scheme for duplications (default: blue, germline standard)')
+
     
     return parser
 
@@ -68,7 +76,11 @@ def run(args):
         str(plot_file),
         genome_length,
         blacklist_regions,
-        figsize=tuple(args.figsize)
+        figsize=tuple(args.figsize),
+        direction=args.direction,
+        del_color=args.del_color,
+        dup_color=args.dup_color
     )
+    
     
     print(f"\nPlot saved: {plot_file}")

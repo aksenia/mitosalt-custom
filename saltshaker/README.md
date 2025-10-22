@@ -86,11 +86,16 @@ This approach identifies the arc complementary to the actual structural change, 
 
 ```bash
 saltshaker classify \
-    --prefix sample \               # Sample identifier (must match one run in call command)
-    --input-dir results/ \          # Input directory with call output
-    --output-dir results/ \         # Output directory (default: input-dir)
-    -b blacklist.bed \              # optional: blacklist regions
-    --vcf                           # optional: output VCF format
+    --prefix sample1 \              # Sample identifier (matches call output)
+    --input-dir results/ \          # Input directory with .saltshaker_call.tsv
+    --output-dir results/ \         # Output directory (default: same as input-dir)
+    -b blacklist.bed \              # Optional: blacklist regions
+    --vcf \                         # Optional: also output VCF format
+    --high-het 20 \                 # Optional: high heteroplasmy threshold % (default: 20)
+    --noise 1.0 \                   # Optional: noise threshold % (default: 1.0)
+    --radius 600 \                  # Optional: spatial clustering radius bp (default: 600)
+    --multiple-threshold 10 \       # Optional: event count for Multiple pattern (default: 10)
+    --dominant-fraction 0.70        # Optional: fraction for dominant group (default: 0.70)
 ```
 
 **Outputs:**
@@ -127,11 +132,14 @@ Generates circular genome plots based on the original R script visualization wit
 
 ```bash
 saltshaker plot \
-    --prefix sample \              # Sample identifier (must match classify command)
-    --input-dir results/ \          # Input directory with classify output
-    --output-dir results/plot/ \   # Output directory (default: input-dir)
-    -b blacklist.bed \              # optional: blacklist regions
-    --figsize 16 10                 # optional: figure size (width height)
+    --prefix sample1 \              # Sample identifier (matches classify output)
+    --input-dir results/ \          # Input directory with .saltshaker_classify_metadata.tsv
+    --output-dir results/plots/ \   # Output directory (default: same as input-dir)
+    -b blacklist.bed \              # Optional: blacklist regions
+    --figsize 16 10 \               # Optional: figure size width height (default: 16 10)
+    --direction counterclockwise \  # Optional: clockwise or counterclockwise (default: counterclockwise)
+    --del-color red \               # Optional: deletion color - red or blue (default: blue)
+    --dup-color blue                # Optional: duplication color - red or blue (default: red)
 ```
 
 **Output:**
@@ -140,8 +148,8 @@ saltshaker plot \
 
 **Visualization features from original R script:**
 
-- Circular genome representation
-- Color coding by event type (blue/red)
+- Circular genome representation (default counterclockwise as in original)
+- Color coding by event type (blue/red) - defaults follow the original
 - Heteroplasmy intensity mapping
 - Arc-based event display
 - Coordinate labeling
@@ -326,8 +334,8 @@ All commands support:
 - `--ori-l-start INT`: Light strand origin start
 - `--ori-l-end INT`: Light strand origin end
 
-
 **Optional:**
+
 - `--output-dir DIR`: Output directory (default: .)
 - `-H, --het-limit FLOAT`: Heteroplasmy threshold (default: 0.01)
 - `-f, --flank-size INT`: Flanking sequence size in bp (default: 15)
@@ -363,6 +371,9 @@ All commands support:
 - `--output-dir DIR`: Output directory (default: input-dir)
 - `-b, --blacklist FILE`: BED file with regions to exclude
 - `--figsize WIDTH HEIGHT`: Figure dimensions (default: 16 10)
+- `--direction STR`: Plot direction - 'clockwise' or 'counterclockwise' (default: counterclockwise)
+- `--del-color STR`: Deletion color - 'red' or 'blue' (default: blue, MitoSAlt original)
+- `--dup-color STR`: Duplication color - 'red' or 'blue' (default: red, MitoSAlt original)
 
 ## Dependencies
 

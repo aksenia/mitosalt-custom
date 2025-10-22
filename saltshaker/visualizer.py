@@ -31,14 +31,13 @@ class CircularPlotter:
             genome_length: Mitochondrial genome length
         """
         self.genome_length = genome_length
-        
-        # Create color maps for deletions (blues) and duplications (reds)
-        self.del_cmap = LinearSegmentedColormap.from_list(
-            'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
-        self.dup_cmap = LinearSegmentedColormap.from_list(
-            'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
-    
-    def plot(self, events, output_file, blacklist_regions=None, figsize=(16, 10)):
+
+        # Color maps will be set in plot() based on parameters
+        self.del_cmap = None
+        self.dup_cmap = None
+
+    def plot(self, events, output_file, blacklist_regions=None, figsize=(16, 10),
+             direction='counterclockwise', del_color='red', dup_color='blue'):
         """
         Create circular plot of mitochondrial events
         
@@ -47,6 +46,10 @@ class CircularPlotter:
             output_file: Path to output PNG file
             blacklist_regions: List of blacklist region dicts (optional)
             figsize: Figure size tuple (default: (16, 10))
+            direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
+            del_color: Color scheme for deletions - 'red' or 'blue' (default: 'blue')
+            dup_color: Color scheme for duplications - 'red' or 'blue' (default: 'red')
+
         """
         
         if len(events) == 0:
@@ -54,6 +57,29 @@ class CircularPlotter:
             return
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
+
+        # Set color maps based on parameters
+        if del_color == 'red':
+            self.del_cmap = LinearSegmentedColormap.from_list(
+                'deletions', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
+            del_label_color = 'red'
+        elif del_color == 'blue':
+            self.del_cmap = LinearSegmentedColormap.from_list(
+                'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
+            del_label_color = 'blue'
+        else:
+            raise ValueError(f"Invalid del_color: {del_color}. Use 'red' or 'blue'")
+
+        if dup_color == 'red':
+            self.dup_cmap = LinearSegmentedColormap.from_list(
+                'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
+            dup_label_color = 'red'
+        elif dup_color == 'blue':
+            self.dup_cmap = LinearSegmentedColormap.from_list(
+                'duplications', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
+            dup_label_color = 'blue'
+        else:
+            raise ValueError(f"Invalid dup_color: {dup_color}. Use 'red' or 'blue'")
         
         # Create data structure for plotting
         dat = pd.DataFrame({
@@ -106,7 +132,7 @@ class CircularPlotter:
             def events_overlap(event1, event2):
                 start1, end1 = event1['deg1'] % 360, event1['deg2'] % 360
                 start2, end2 = event2['deg1'] % 360, event2['deg2'] % 360
-                min_gap = 4
+                min_gap = 5
                 
                 def normalize_arc(start, end):
                     return [(start, 360), (0, end)] if start > end else [(start, end)]
@@ -124,7 +150,7 @@ class CircularPlotter:
             single_event_groups = [g for g in unique_groups if group_counts[g] == 1]
             multi_event_groups = [g for g in unique_groups if group_counts[g] > 1]
             
-            group_band_size = 18
+            group_band_size = 25
             group_gap = 6
             current_radius = base_radius
             assignments = {}
@@ -175,7 +201,7 @@ class CircularPlotter:
                                     for prev_idx in group_indices[:i]):
                                 data.loc[idx, 'radius'] = test_radius
                                 break
-                            test_radius -= 2
+                            test_radius -= 5
                         else:
                             data.loc[idx, 'radius'] = max(20, band_bottom)  # Add minimum bound
             
@@ -276,7 +302,14 @@ class CircularPlotter:
         ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
         ax.set_ylim(0, dynamic_radius + 30)
         ax.set_theta_zero_location('N')
-        ax.set_theta_direction(-1)
+
+        # Set direction based on parameter
+        if direction == 'counterclockwise':
+            ax.set_theta_direction(1)  # Counterclockwise
+        elif direction == 'clockwise':
+            ax.set_theta_direction(-1)  # Clockwise
+        else:
+            raise ValueError(f"Invalid direction: {direction}. Use 'clockwise' or 'counterclockwise'")
         
         # Draw genome circle (use dynamic radius instead of hardcoded)
         circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
@@ -375,7 +408,7 @@ class CircularPlotter:
                     alpha = get_continuous_alpha(het_val, dup_min, dup_max)
                 
             theta = np.linspace(deg1_rad, deg2_rad, 100)
-            linewidth = 2.0 if len(dat_processed) <= 100 else (1.5 if len(dat_processed) <= 200 else 1.0)
+            linewidth = 2.5 if len(dat_processed) <= 100 else (2.0 if len(dat_processed) <= 200 else 1.5)
             ax.plot(theta, [radius]*len(theta), color=color, linewidth=linewidth, alpha=alpha)
 
         # Group labeling
@@ -426,74 +459,75 @@ class CircularPlotter:
                     fontsize=13, weight='bold', color=(0.2, 0.8, 0.2),
                     verticalalignment='top')
         
+        def draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width, 
+                                events, min_val, max_val, label, color_func, label_color, offset_x=0):
+            """Draw a single gradient legend bar with labels"""
+            if len(events) == 0:
+                return
+            
+            n_steps = 100
+            step_height = legend_height / n_steps
+            
+            # Draw gradient rectangles
+            for i in range(n_steps):
+                norm = i / (n_steps - 1)
+                het_val = min_val + norm * (max_val - min_val) if max_val > min_val else min_val
+                y_pos = legend_y - legend_height/2 + i * step_height
+                
+                color = color_func(het_val, min_val, max_val)
+                alpha = get_continuous_alpha(het_val, min_val, max_val)
+                
+                rect = plt.Rectangle(
+                    (legend_x + offset_x, y_pos), bar_width, step_height,
+                    facecolor=color, alpha=alpha, edgecolor='none',
+                    transform=fig.transFigure
+                )
+                fig.patches.append(rect)
+            
+            # Label at top
+            label_x = legend_x + offset_x + bar_width / 2
+            fig.text(label_x, legend_y + legend_height/2 + 0.01, label, 
+                    fontsize=10, ha='center', weight='bold', color=label_color)
+            
+            # Min/max values
+            for pos, val in [(1, max_val), (0, min_val)]:
+                y_pos = legend_y - legend_height/2 + pos * legend_height
+                # Left-align for left bar, right-align for right bar
+                if offset_x == 0:  # Left bar
+                    fig.text(legend_x - 0.015, y_pos, f"{val:.1f}%", 
+                            fontsize=10, va='center', ha='right', color=label_color)
+                else:  # Right bar
+                    fig.text(legend_x + offset_x + bar_width + 0.015, y_pos, f"{val:.1f}%", 
+                            fontsize=10, va='center', ha='left', color=label_color)
+
+
+        # Then in the main code, replace the entire legend section with:
+
         # 2. SEPARATE GRADIENT LEGENDS - independently scaled
         legend_x = 0.08
         legend_y = 0.5
         legend_height = 0.35
         legend_width = 0.045
 
-        # Create separate gradient bars
-        n_steps = 100
-        step_height = legend_height / n_steps
         bar_gap = 0.02
         bar_width = (legend_width - bar_gap) / 2
 
-        # Deletion gradient (left bar)
-        if len(del_events) > 0:
-            for i in range(n_steps):
-                norm = i / (n_steps - 1)
-                het_val = del_min + norm * (del_max - del_min) if del_max > del_min else del_min
-                y_pos = legend_y - legend_height/2 + i * step_height
+        # Choose color functions based on parameters
+        del_color_func = get_pure_red_color if del_color == 'red' else get_pure_blue_color
+        dup_color_func = get_pure_red_color if dup_color == 'red' else get_pure_blue_color
 
-                del_color = get_pure_blue_color(het_val, del_min, del_max)
-                del_alpha = get_continuous_alpha(het_val, del_min, del_max)
-                del_rect = plt.Rectangle(
-                    (legend_x, y_pos), bar_width, step_height,
-                    facecolor=del_color, alpha=del_alpha, edgecolor='none',
-                    transform=fig.transFigure
-                )
-                fig.patches.append(del_rect)
+        # Draw deletion legend (left bar)
+        draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
+                            del_events, del_min, del_max, "Del", del_color_func, del_label_color, offset_x=0)
 
-        # Duplication gradient (right bar) 
-        if len(dup_events) > 0:
-            for i in range(n_steps):
-                norm = i / (n_steps - 1)
-                het_val = dup_min + norm * (dup_max - dup_min) if dup_max > dup_min else dup_min
-                y_pos = legend_y - legend_height/2 + i * step_height
+        # Draw duplication legend (right bar)
+        draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
+                            dup_events, dup_min, dup_max, "Dup", dup_color_func, dup_label_color, 
+                            offset_x=bar_width + bar_gap)
 
-                dup_color = get_pure_red_color(het_val, dup_min, dup_max)
-                dup_alpha = get_continuous_alpha(het_val, dup_min, dup_max)
-                dup_rect = plt.Rectangle(
-                    (legend_x + bar_width + bar_gap, y_pos), bar_width, step_height,
-                    facecolor=dup_color, alpha=dup_alpha, edgecolor='none',
-                    transform=fig.transFigure
-                )
-                fig.patches.append(dup_rect)
-
-        # Labels and values
-        del_label_x = legend_x + bar_width / 2
-        fig.text(del_label_x, legend_y + legend_height/2 + 0.01, "Del", 
-                fontsize=9, ha='center', weight='bold', color='blue')
-
-        dup_label_x = legend_x + bar_width + bar_gap + bar_width / 2
-        fig.text(dup_label_x, legend_y + legend_height/2 + 0.01, "Dup", 
-                fontsize=9, ha='center', weight='bold', color='red')
-
-        # Separate value labels for each scale
-        if len(del_events) > 0:
-            for pos, val in [(1, del_max), (0, del_min)]:
-                y_pos = legend_y - legend_height/2 + pos * legend_height
-                fig.text(legend_x - 0.015, y_pos, f"{val:.1f}%", 
-                        fontsize=10, va='center', ha='right', color='blue')
-
-        if len(dup_events) > 0:
-            for pos, val in [(1, dup_max), (0, dup_min)]:
-                y_pos = legend_y - legend_height/2 + pos * legend_height
-                fig.text(legend_x + legend_width + 0.015, y_pos, f"{val:.1f}%",
-                        fontsize=10, va='center', color='red')
-
+        # Heteroplasmy label below both bars
         fig.text(legend_x + legend_width/2, legend_y - legend_height/2 - 0.03, 
-                "Heteroplasmy (%)", fontsize=12, weight='bold', ha='center')
+                "Heteroplasmy (%)", fontsize=13, weight='bold', ha='center')
 
         
         ax.grid(False)
@@ -530,7 +564,9 @@ class CircularPlotter:
             return (9999, 0)
 
 
-def plot_circular(events, output_file, genome_length, blacklist_regions=None, figsize=(16, 10)):
+def plot_circular(events, output_file, genome_length, blacklist_regions=None, 
+                  figsize=(16, 10), direction='counterclockwise', 
+                  del_color='red', dup_color='blue'):
     """
     Convenience function to create circular plot
     
@@ -540,6 +576,9 @@ def plot_circular(events, output_file, genome_length, blacklist_regions=None, fi
         genome_length: Mitochondrial genome length
         blacklist_regions: List of blacklist regions
         figsize: Figure size tuple
+        direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
+        del_color: Color for deletions - 'red' or 'blue' (default: 'red')
+        dup_color: Color for duplications - 'red' or 'blue' (default: 'blue')
     """
     plotter = CircularPlotter(genome_length)
-    plotter.plot(events, output_file, blacklist_regions, figsize)
+    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color)
