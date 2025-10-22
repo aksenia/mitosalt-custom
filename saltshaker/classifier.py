@@ -68,17 +68,20 @@ class EventClassifier:
             blacklist_filtered = 0
         
         # Basic event metrics
-        total_events = len(clean_events)
+        total_events = len(clean_events) # All events for spatial grouping
         high_het_events = clean_events[clean_events['perc'] >= HIGH_HET]
         significant_events = clean_events[clean_events['perc'] >= NOISE]
         
-        max_het = clean_events['perc'].max()
-        median_het = clean_events['perc'].median()
+       # Get metrics from significant events only, fallback on total without blacklisted
+        max_het = significant_events['perc'].max() if len(significant_events) > 0 else clean_events['perc'].max()
+        median_het = significant_events['perc'].median() if len(significant_events) > 0 else clean_events['perc'].median()
+
         
-        # Count by type
+        # Counts for classification
+        significant_count = len(significant_events)
+        high_het_count = len(high_het_events)
         del_count = (significant_events['final.event'] == 'del').sum()
         dup_count = (significant_events['final.event'] == 'dup').sum()
-        significant_count = len(significant_events)
         
         # ============================================================
         # CLASSIFICATION LOGIC
@@ -107,7 +110,7 @@ class EventClassifier:
             return classification, reason, criteria, events_with_groups
         
         # RULE 2: Too few to cluster AND not pathogenic → Not significant
-        elif total_events < MIN_CLUSTER_SIZE and max_het < HIGH_HET:
+        elif significant_count < MIN_CLUSTER_SIZE and max_het < HIGH_HET:
             classification = "No significant events"
             reason = f"{total_events} event(s) below clinical threshold (max {max_het:.1f}%, <{HIGH_HET:.0f}%)"
             
@@ -151,10 +154,11 @@ class EventClassifier:
             # Can we assess spatial distribution?
             can_assess_spatial = total_events >= MIN_CLUSTER_SIZE
             
-            # Pattern indicators
+            # Pattern indicators  - based on SIGNIFICANT events (biological relevance)
             has_high_het = len(high_het_events) > 0
-            few_events = total_events <= MULTIPLE_THRESHOLD
-            many_events = total_events > MULTIPLE_THRESHOLD
+            few_events = significant_count <= MULTIPLE_THRESHOLD  # Changed from total_events
+            many_events = significant_count > MULTIPLE_THRESHOLD  # Changed from total_events
+
             no_high_het = len(high_het_events) == 0
             
             # Spatial metrics (only meaningful if enough events)
@@ -214,7 +218,7 @@ class EventClassifier:
                     reason = f"ambiguous, high max heteroplasmy ({max_het:.1f}%)"
                 else:
                     classification = "Multiple"
-                    reason = f"ambiguous, {total_events} low-het events (median {median_het:.1f}%)"
+                    reason = f"ambiguous, {significant_count} low-het events (median {median_het:.1f}%)"
             
             # Add blacklist info
             if blacklist_filtered > 0:

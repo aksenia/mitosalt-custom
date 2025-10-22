@@ -123,32 +123,35 @@ class SpatialGroupAnalyzer:
         groups = []
         used_indices = set()
         
-        # Sort by heteroplasmy (highest first)
-        events_sorted = events.sort_values('perc', ascending=False).reset_index()
+        # Sort by heteroplasmy (highest first) - KEEP ORIGINAL INDEX
+        events_sorted = events.sort_values('perc', ascending=False)
         
-        for idx, (_, event) in enumerate(events_sorted.iterrows()):
-            orig_idx = event['index']
-            if orig_idx in used_indices:
+        for idx in events_sorted.index:  # Use original index directly
+            if idx in used_indices:
                 continue
-                
+            
+            event = events_sorted.loc[idx]
+            
             # Start new group
-            group = [self._event_to_dict(event, orig_idx)]
-            used_indices.add(orig_idx)
+            group = [self._event_to_dict(event, idx)]
+            used_indices.add(idx)
             
             # Find close events (single-linkage clustering)
-            for jdx, (_, other_event) in enumerate(events_sorted.iterrows()):
-                orig_jdx = other_event['index']
-                if orig_jdx in used_indices:
+            for other_idx in events_sorted.index:
+                if other_idx in used_indices:
                     continue
-                    
-                other_dict = self._event_to_dict(other_event, orig_jdx)
                 
-                if self._events_are_close(group[0], other_dict, radius):
+                other_event = events_sorted.loc[other_idx]
+                other_dict = self._event_to_dict(other_event, other_idx)
+                
+                # Check if close to ANY event in group (true single-linkage)
+                if any(self._events_are_close(group_event, other_dict, radius) 
+                    for group_event in group):
                     group.append(other_dict)
-                    used_indices.add(orig_jdx)
+                    used_indices.add(other_idx)
             
-            if len(group) >= 1:
-                groups.append(self._build_group_info(group, event_type))
+            # Always create group (even single events)
+            groups.append(self._build_group_info(group, event_type))
         
         return groups
 
@@ -193,8 +196,8 @@ class SpatialGroupAnalyzer:
         return group_info
 
     def _build_grouping_results(self, all_groups, events_df, significant_groups, 
-                               high_het_groups, high_het_threshold, sig_het_threshold):
-        """Build final grouping results"""
+                            high_het_groups, high_het_threshold, sig_het_threshold):
+        """Build final grouping results with defensive index handling"""
         dominant_group = all_groups[0] if all_groups else None
         dominant_group_events = dominant_group['event_count'] if dominant_group else 0
         dominant_group_range = dominant_group['spatial_range'] if dominant_group else 0
@@ -202,19 +205,34 @@ class SpatialGroupAnalyzer:
         events_in_significant_groups = sum(g['event_count'] for g in significant_groups)
         outlier_events = len(events_df) - events_in_significant_groups
         
-        # Assign group IDs to events
+        # Assign group IDs to events - DEFENSIVE APPROACH
         events_with_groups = events_df.copy()
-        events_with_groups['group'] = 'G1'
+        events_with_groups['group'] = 'UNGROUPED'  # Default for debugging
         
         if len(all_groups) > 0:
+            # Build mapping: original_index -> group_id
             idx_to_group = {}
             for group_info in all_groups:
                 for event in group_info['events']:
                     idx_to_group[event['idx']] = group_info['group_id']
             
-            for idx, row in events_with_groups.iterrows():
+            # Verify all events are accounted for
+            assigned_count = 0
+            for idx in events_with_groups.index:
                 if idx in idx_to_group:
                     events_with_groups.loc[idx, 'group'] = idx_to_group[idx]
+                    assigned_count += 1
+                else:
+                    # Defensive: Should never happen, but flag it
+                    print(f"WARNING: Event at index {idx} not assigned to any group!")
+                    events_with_groups.loc[idx, 'group'] = 'G999'
+            
+            # Sanity check
+            if assigned_count != len(events_df):
+                print(f"WARNING: Only {assigned_count}/{len(events_df)} events assigned to groups!")
+        else:
+            # No groups - assign all to default
+            events_with_groups['group'] = 'G1'
         
         return {
             'group_analysis': all_groups,

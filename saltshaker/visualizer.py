@@ -208,24 +208,23 @@ class CircularPlotter:
             del_frac = (del_space_needed / total_group_space) * available_frac
             dup_frac = (dup_space_needed / total_group_space) * available_frac
             
-            # Determine outer vs inner based on group numbers
-            # Extract minimum group number for ordering (handles G1, BL1, etc.)
-            def extract_group_num(group_id):
-                """Extract numeric part from group ID"""
-                match = re.match(r'^[A-Z]+(\d+)$', str(group_id))
-                return int(match.group(1)) if match else 999
+            # Determine outer vs inner based on MEDIAN SIZE (largest type goes outside)
+            # Keep type separation: all dels in one ring, all dups in another
+            del_median_size = dat_del['delsize'].median() if len(dat_del) > 0 else 0
+            dup_median_size = dat_dup['delsize'].median() if len(dat_dup) > 0 else 0
 
-            del_min_group = min([extract_group_num(g) for g in dat_del['group'].unique()]) if len(dat_del) > 0 else 999
-            dup_min_group = min([extract_group_num(g) for g in dat_dup['group'].unique()]) if len(dat_dup) > 0 else 999
-            
-            if dup_min_group < del_min_group:
+            if dup_median_size > del_median_size:
+                # Duplications are larger → put ALL dups outside, ALL dels inside
                 outer_frac, inner_frac = dup_frac, del_frac
                 outer_data, inner_data = dat_dup, dat_del
                 outer_type = 'dup'
             else:
+                # Deletions are larger (or equal) → put ALL dels outside, ALL dups inside
                 outer_frac, inner_frac = del_frac, dup_frac  
                 outer_data, inner_data = dat_del, dat_dup
                 outer_type = 'del'
+
+            print(f"DEBUG: Layout - {outer_type.upper()} outside (median size: {max(del_median_size, dup_median_size):.0f}bp)")
             
             # Calculate radius ranges
             inner_max = base_radius * inner_frac
