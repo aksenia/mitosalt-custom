@@ -15,10 +15,10 @@ class ClassificationConfig:
     # ============================================================
     # HETEROPLASMY THRESHOLDS
     # ============================================================
-    HIGH_HET_THRESHOLD: float = 20.0
+    HIGH_HET_THRESHOLD: float = 10.0
     """High heteroplasmy threshold - pathogenic significance (≥20%)"""
     
-    NOISE_THRESHOLD: float = 0.7
+    NOISE_THRESHOLD: float = 0.3
     """Noise threshold - below this likely artifacts (<1%)"""
     
     # ============================================================
@@ -36,5 +36,5 @@ class ClassificationConfig:
     MULTIPLE_EVENT_THRESHOLD: int = 5
     """Event count threshold for Multiple pattern (>10 = Multiple)"""
     
-    DOMINANT_GROUP_FRACTION: float = 0.70
+    DOMINANT_GROUP_FRACTION: float = 0.5
     """Fraction of events in dominant group for Single pattern (≥70%)"""
