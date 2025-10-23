@@ -126,6 +126,18 @@ class EventClassifier:
             if len(events_with_groups) > 0:
                 events_with_groups['group'] = 'G1'
             
+            # Add blacklist events back for visualization/output
+            if blacklist_regions and blacklist_filtered > 0:
+                blacklist_events = events[events.apply(
+                    lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
+                    axis=1
+                )].copy()
+                
+                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
+                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
+                
+                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+            
             return classification, reason, criteria, events_with_groups
         
         # RULE 2: Too few to cluster AND not pathogenic → Not significant
@@ -149,6 +161,18 @@ class EventClassifier:
             
             events_with_groups = clean_events.copy()
             events_with_groups['group'] = 'G1'
+            
+            # Add blacklist events back for visualization/output
+            if blacklist_regions and blacklist_filtered > 0:
+                blacklist_events = events[events.apply(
+                    lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
+                    axis=1
+                )].copy()
+                
+                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
+                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
+                
+                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
             
             return classification, reason, criteria, events_with_groups
         
