@@ -45,8 +45,8 @@ saltshaker call \
     --ori-l-start 5730 --ori-l-end 5763 \   # light strand origin
     -H 0.01 \                               # heteroplasmy threshold
     -f 15 \                                 # flanking sequence size (bp)
-    --blacklist                 # Optional: enable with default MT blacklist, OR
-    --blacklist custom_bl.bed   # Optional: enable with custom BED file
+    --blacklist                             # Optional: enable with default MT blacklist, OR
+    --blacklist custom_bl.bed               # Optional: enable with custom BED file
 Out
 ```
 
@@ -91,8 +91,8 @@ saltshaker classify \
     --prefix sample1 \              # Sample identifier (matches call output)
     --input-dir results/ \          # Input directory with .saltshaker_call.tsv
     --output-dir results/ \         # Output directory (default: same as input-dir)
-    --blacklist                 # Optional: enable with default MT blacklist, OR
-    --blacklist custom_bl.bed   # Optional: enable with custom BED file
+    --blacklist                     # Optional: enable with default MT blacklist, OR
+    --blacklist custom_bl.bed       # Optional: enable with custom BED file
    --vcf \                         # Optional: also output VCF format
     --high-het 20 \                 # Optional: high heteroplasmy threshold % (default: 20)
     --noise 1.0 \                   # Optional: noise threshold % (default: 1.0)
@@ -143,7 +143,7 @@ saltshaker plot \
     --blacklist \                   # Optional: enable with default MT blacklist, OR
     --blacklist custom_bl.bed \     # Optional: enable with custom BED file
     --figsize 16 10 \               # Optional: width height (default: 16 10)
-    --direction clockwise \  # Optional: clockwise or counterclockwise (default: counterclockwise)
+    --direction clockwise \         # Optional: clockwise or counterclockwise (default: counterclockwise)
     --del-color red \               # Optional: red or blue (default: blues)
     --dup-color blue                # Optional: red or blue (default: red)
 
@@ -412,7 +412,7 @@ saltshaker/
 └── data/
     ├── __init__.py      # Default file paths
     ├── gencode.v49.annotation.MT_genes.bed      # Default MT gene annotations
-    └── mt_blacklist_regions.bed                  # Default MT blacklist regions
+    └── mt_blacklist_regions.bed                 # Default MT blacklist regions
 docs/
 └── classification_algorithm.md  # Detailed classification algorithm documentation
 ```
