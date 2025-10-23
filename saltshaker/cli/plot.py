@@ -1,11 +1,14 @@
 """Plot subcommand - visualization"""
 
 from pathlib import Path
+import logging
 
 from logistro import parser
 
 from ..visualizer import plot_circular
 from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
+
+logger = logging.getLogger(__name__)
 
 
 def add_parser(subparsers):
@@ -46,7 +49,7 @@ def add_parser(subparsers):
 
 def run(args):
     """Execute plot subcommand"""
-    print("=== SaltShaker: Circular Plot ===\n")
+    logger.info("=== SaltShaker: Circular Plot ===")
     
     # Setup directories
     input_dir = Path(args.input_dir)
@@ -57,12 +60,12 @@ def run(args):
     input_file = input_dir / f"{args.prefix}.saltshaker_classify_metadata.tsv"
     plot_file = output_dir / f"{args.prefix}.saltshaker.png"
     
-    print(f"Sample prefix: {args.prefix}")
-    print(f"Input: {input_file}")
-    print(f"Output: {plot_file}")
-    print(f"Direction: {args.direction}")
-    print(f"Del color: {args.del_color}, Dup color: {args.dup_color}")
-    print(f"Scale: {args.scale}")
+    logger.info(f"Sample prefix: {args.prefix}")
+    logger.info(f"Input: {input_file}")
+    logger.info(f"Output: {plot_file}")
+    logger.info(f"Direction: {args.direction}")
+    logger.info(f"Del color: {args.del_color}, Dup color: {args.dup_color}")
+    logger.info(f"Scale: {args.scale}")
     
     # Check input exists
     if not input_file.exists():
@@ -71,7 +74,7 @@ def run(args):
     
     # Load events
     events, genome_length = read_intermediate(str(input_file))
-    print(f"Loaded {len(events)} events")
+    logger.info(f"Loaded {len(events)} events")
     
     # Load blacklist regions
     blacklist_regions = None
@@ -80,18 +83,18 @@ def run(args):
             # Use built-in default blacklist
             from ..data import DEFAULT_MT_BLACKLIST
             blacklist_file = DEFAULT_MT_BLACKLIST
-            print(f"Using default MT blacklist regions")
+            logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
             blacklist_file = args.blacklist
-            print(f"Using custom blacklist: {blacklist_file}")
+            logger.info(f"Using custom blacklist: {blacklist_file}")
         
         # Validate file exists
         if not Path(blacklist_file).exists():
             raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
         
         blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
-        print(f"Loaded {len(blacklist_regions)} blacklist regions")
+        logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
 
     # Load gene annotations
     gene_annotations = None
@@ -100,21 +103,21 @@ def run(args):
             # Use built-in default annotations
             from ..data import DEFAULT_MT_GENES
             gene_file = DEFAULT_MT_GENES
-            print(f"Using default hg38 MT gene annotations")
+            logger.info("Using default hg38 MT gene annotations")
         else:
             # Use user-provided file
             gene_file = args.genes
-            print(f"Using custom gene annotations: {gene_file}")
+            logger.info(f"Using custom gene annotations: {gene_file}")
         
         # Validate file exists
         if not Path(gene_file).exists():
             raise FileNotFoundError(f"Gene annotation file not found: {gene_file}")
         
         gene_annotations = GeneAnnotationReader.load_gene_annotations(gene_file)
-        print(f"Loaded {len(gene_annotations)} gene annotations")
+        logger.info(f"Loaded {len(gene_annotations)} gene annotations")
 
     # Create plot
-    print(f"\nGenerating plot...")
+    logger.info("Generating plot...")
     plot_circular(
         events,
         str(plot_file),
@@ -129,4 +132,4 @@ def run(args):
     )
     
     
-    print(f"\n✓ Plot saved: {plot_file}")
+    logger.info(f"✓ Plot saved: {plot_file}")

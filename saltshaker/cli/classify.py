@@ -1,10 +1,13 @@
 """Classify subcommand - pattern classification"""
 
 from pathlib import Path
+import logging
 
 from ..config import ClassificationConfig
 from ..classifier import EventClassifier
 from ..io import BlacklistReader, write_summary, write_vcf, write_intermediate, read_intermediate
+
+logger = logging.getLogger(__name__)
 
 
 def add_parser(subparsers):
@@ -47,7 +50,7 @@ def add_parser(subparsers):
 
 def run(args):
     """Execute classify subcommand"""
-    print("=== SaltShaker: Pattern Classification ===\n")
+    logger.info("=== SaltShaker: Pattern Classification ===")
     
     # Setup directories
     input_dir = Path(args.input_dir)
@@ -60,9 +63,9 @@ def run(args):
     classified_file = output_dir / f"{args.prefix}.saltshaker_classify_metadata.tsv"
     vcf_file = output_dir / f"{args.prefix}.saltshaker.vcf"
     
-    print(f"Sample prefix: {args.prefix}")
-    print(f"Input: {input_file}")
-    print(f"Output directory: {output_dir}")
+    logger.info(f"Sample prefix: {args.prefix}")
+    logger.info(f"Input: {input_file}")
+    logger.info(f"Output directory: {output_dir}")
     
     # Check input exists
     if not input_file.exists():
@@ -71,8 +74,8 @@ def run(args):
     
     # Load events
     events, genome_length = read_intermediate(str(input_file))
-    print(f"Loaded {len(events)} events")
-    print(f"Genome length: {genome_length}")
+    logger.info(f"Loaded {len(events)} events")
+    logger.info(f"Genome length: {genome_length}")
     
     # Load blacklist regions
     blacklist_regions = None
@@ -81,18 +84,18 @@ def run(args):
             # Use built-in default blacklist
             from ..data import DEFAULT_MT_BLACKLIST
             blacklist_file = DEFAULT_MT_BLACKLIST
-            print(f"Using default MT blacklist regions")
+            logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
             blacklist_file = args.blacklist
-            print(f"Using custom blacklist: {blacklist_file}")
+            logger.info(f"Using custom blacklist: {blacklist_file}")
         
         # Validate file exists
         if not Path(blacklist_file).exists():
             raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
         
         blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
-        print(f"Loaded {len(blacklist_regions)} blacklist regions")
+        logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
     
     # Create config with CLI overrides
     config = ClassificationConfig()
@@ -108,14 +111,13 @@ def run(args):
         config.DOMINANT_GROUP_FRACTION = args.dominant_fraction
     
     # Print parameters
-    print("\nClassification Parameters:")
-    print(f"  High heteroplasmy threshold: {config.HIGH_HET_THRESHOLD:.1f}%")
-    print(f"  Noise threshold: {config.NOISE_THRESHOLD:.1f}%")
-    print(f"  Spatial clustering radius: {config.CLUSTER_RADIUS} bp")
-    print(f"  Min cluster size: {config.MIN_CLUSTER_SIZE} events")
-    print(f"  Multiple event threshold: {config.MULTIPLE_EVENT_THRESHOLD} events")
-    print(f"  Dominant group fraction: {config.DOMINANT_GROUP_FRACTION:.0%}")
-    print()
+    logger.info("Classification Parameters:")
+    logger.info(f"  High heteroplasmy threshold: {config.HIGH_HET_THRESHOLD:.1f}%")
+    logger.info(f"  Noise threshold: {config.NOISE_THRESHOLD:.1f}%")
+    logger.info(f"  Spatial clustering radius: {config.CLUSTER_RADIUS} bp")
+    logger.info(f"  Min cluster size: {config.MIN_CLUSTER_SIZE} events")
+    logger.info(f"  Multiple event threshold: {config.MULTIPLE_EVENT_THRESHOLD} events")
+    logger.info(f"  Dominant group fraction: {config.DOMINANT_GROUP_FRACTION:.0%}")
     
     # Classify
     classifier = EventClassifier(genome_length, config)
@@ -123,8 +125,8 @@ def run(args):
         events, blacklist_regions=blacklist_regions
     )
     
-    print(f"Classification: {classification}")
-    print(f"Reason: {reason}\n")
+    logger.info(f"Classification: {classification}")
+    logger.info(f"Reason: {reason}")
     
     # Write summary
     write_summary(
@@ -135,11 +137,11 @@ def run(args):
         config=config,
         blacklist_regions=blacklist_regions
     )
-    print(f"Summary: {summary_file}")
+    logger.info(f"Summary: {summary_file}")
     
     # Always save classified intermediate for plotting
     write_intermediate(events_with_groups, str(classified_file), genome_length)
-    print(f"Classified events: {classified_file} (use for plot)")
+    logger.info(f"Classified events: {classified_file} (use for plot)")
     
     # Optional VCF
     if args.vcf:
@@ -150,4 +152,4 @@ def run(args):
             reference_name="chrM",
             sample_name=args.prefix
         )
-        print(f"VCF: {vcf_file}")
+        logger.info(f"VCF: {vcf_file}")

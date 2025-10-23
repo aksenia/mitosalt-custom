@@ -7,6 +7,9 @@ Handles reading of various input files.
 from importlib.resources import path
 import pandas as pd
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BlacklistReader:
@@ -71,7 +74,7 @@ class BlacklistReader:
                 blacklist_regions = blacklist.to_dict('records')
         
         except Exception as e:
-            print(f"Warning: Could not load blacklist file: {e}")
+            logger.warning(f"Could not load blacklist file: {e}")
         
         return blacklist_regions
     

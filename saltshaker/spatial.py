@@ -7,7 +7,10 @@ Groups events by proximity on the circular genome.
 
 import pandas as pd
 import numpy as np
+import logging
 from .config import ClassificationConfig
+
+logger = logging.getLogger(__name__)
 
 
 class SpatialGroupAnalyzer:
@@ -58,14 +61,14 @@ class SpatialGroupAnalyzer:
         if len(events_df) == 0:
             return self._empty_grouping_result(events_df)
 
-        print(f"DEBUG Spatial Grouping: {len(events_df)} events, radius={radius}bp, min_size={min_group_size}")
+        logger.debug(f"Spatial Grouping: {len(events_df)} events, radius={radius}bp, min_size={min_group_size}")
 
 
         # Separate by event type first to avoid mixed groups
         del_events = events_df[events_df['final.event'] == 'del'].copy()
         dup_events = events_df[events_df['final.event'] == 'dup'].copy()
 
-        print(f"DEBUG: {len(del_events)} deletions, {len(dup_events)} duplications")
+        logger.debug(f"{len(del_events)} deletions, {len(dup_events)} duplications")
         
         # Group each type separately
         del_groups = self._group_events_by_type(del_events, radius, 'del') if len(del_events) > 0 else []
@@ -224,12 +227,12 @@ class SpatialGroupAnalyzer:
                     assigned_count += 1
                 else:
                     # Defensive: Should never happen, but flag it
-                    print(f"WARNING: Event at index {idx} not assigned to any group!")
+                    logger.warning(f"Event at index {idx} not assigned to any group!")
                     events_with_groups.loc[idx, 'group'] = 'G999'
             
             # Sanity check
             if assigned_count != len(events_df):
-                print(f"WARNING: Only {assigned_count}/{len(events_df)} events assigned to groups!")
+                logger.warning(f"Only {assigned_count}/{len(events_df)} events assigned to groups!")
         else:
             # No groups - assign all to default
             events_with_groups['group'] = 'G1'

@@ -7,7 +7,10 @@ Handles writing of analysis results in various formats.
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import logging
 from ..utils import crosses_blacklist
+
+logger = logging.getLogger(__name__)
 
 
 class TSVWriter:
@@ -35,14 +38,14 @@ class TSVWriter:
             blacklist_regions: List of blacklist regions for flagging
         """
         if len(events) == 0:
-            print("No events to save")
+            logger.warning("No events to save")
             return
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 #        events.to_pickle(output_file + '.pkl')  # Save intermediate pickle for debugging
         
         res = events.copy()
-        print(f"Starting save_results with {len(res)} events")
+        logger.debug(f"Starting save_results with {len(res)} events")
         
         # Coordinate swapping for OUTPUT only (R script logic)
         for i in res.index:
@@ -127,8 +130,8 @@ class TSVWriter:
         
         # Save results
         res_final.to_csv(output_file, sep='\t', index=False)
-        print(f"Results saved to {output_file}")
-        print(f"Events: {len(res_final)}")
+        logger.info(f"Results saved to {output_file}")
+        logger.info(f"Events: {len(res_final)}")
 
 
 def write_tsv(events, output_file, genome_length, blacklist_regions=None):
@@ -165,7 +168,7 @@ class IntermediateWriter:
             f.write(f"# genome_length={genome_length}\n")
             events.to_csv(f, sep='\t', index=False)
         
-        print(f"Intermediate results saved to {output_file}")
+        logger.info(f"Intermediate results saved to {output_file}")
     
 def write_intermediate(events, output_file, genome_length):
     """Convenience function"""
@@ -402,10 +405,10 @@ class SummaryWriter:
             f.write("- Mouse models: multiple low-heteroplasmy events (<3%)\n")
             f.write(f"- Clinical thresholds: >{cfg.HIGH_HET_THRESHOLD:.0f}% for pathogenic significance\n")
         
-        print(f"Enhanced analysis summary saved to {output_file}")
-        print(f"Event classification: {classification} ({reason})")
+        logger.info(f"Enhanced analysis summary saved to {output_file}")
+        logger.info(f"Event classification: {classification} ({reason})")
         if 'subtype' in criteria:
-            print(f"Pattern subtype: {criteria['subtype']}")
+            logger.info(f"Pattern subtype: {criteria['subtype']}")
 
 def write_summary(events, output_file, analysis_stats, classification_result, config=None, blacklist_regions=None):
     """

@@ -7,9 +7,17 @@ Command-line interface with subcommands for modular analysis.
 import argparse
 import sys
 from .cli import call, classify, plot
+import logging
 
 
 def main():
+     # Logging configuration
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
     parser = argparse.ArgumentParser(
         prog='saltshaker',
         description='SaltShaker: Pattern classification and visualization for MitoSAlt'
@@ -36,6 +44,7 @@ def main():
         classify.run(args)
     elif args.command == 'plot':
         plot.run(args)
+
 
 
 if __name__ == "__main__":

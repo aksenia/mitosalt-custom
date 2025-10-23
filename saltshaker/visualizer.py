@@ -12,7 +12,10 @@ import matplotlib.patches as patches
 from matplotlib.colors import LinearSegmentedColormap
 from pathlib import Path
 import re
+import logging
 from .utils import crosses_blacklist
+
+logger = logging.getLogger(__name__)
 
 
 class CircularPlotter:
@@ -56,7 +59,7 @@ class CircularPlotter:
         """
         
         if len(events) == 0:
-            print("No events to plot")
+            logger.warning("No events to plot")
             return
         
         # Validate scale parameter
@@ -257,15 +260,15 @@ class CircularPlotter:
                 outer_data, inner_data = dat_del, dat_dup
                 outer_type = 'del'
 
-            print(f"DEBUG: Layout - {outer_type.upper()} outside (median size: {max(del_median_size, dup_median_size):.0f}bp)")
+            logger.debug(f"Layout - {outer_type.upper()} outside (median size: {max(del_median_size, dup_median_size):.0f}bp)")
             
             # Calculate radius ranges
             inner_max = base_radius * inner_frac
             outer_min = base_radius * (inner_frac + separator_frac)
             blacklist_radius = (inner_max + outer_min) / 2
             
-            print(f"DEBUG: Fractions - Inner: {inner_frac:.3f}, Separator: {separator_frac:.3f}, Outer: {outer_frac:.3f}")
-            print(f"DEBUG: Ranges - Inner: [0-{inner_max:.1f}], Outer: [{outer_min:.1f}-{base_radius}], BL: {blacklist_radius:.1f}")
+            logger.debug(f"Fractions - Inner: {inner_frac:.3f}, Separator: {separator_frac:.3f}, Outer: {outer_frac:.3f}")
+            logger.debug(f"Ranges - Inner: [0-{inner_max:.1f}], Outer: [{outer_min:.1f}-{base_radius}], BL: {blacklist_radius:.1f}")
             
             # Assign radii within ranges
             if len(inner_data) > 0:
@@ -308,7 +311,7 @@ class CircularPlotter:
             dup_max = 100.0
             bl_min = 0.0
             bl_max = 100.0
-            print(f"Using fixed heteroplasmy scale: 0-100%")
+            logger.info("Using fixed heteroplasmy scale: 0-100%")
         else:  # dynamic
             # Dynamic scale: min-max within each category
             del_max = del_events['value'].max() if len(del_events) > 0 else 0
@@ -327,7 +330,7 @@ class CircularPlotter:
             else:
                 bl_min = 0.0
                 bl_max = 100.0
-            print(f"Using dynamic heteroplasmy scale - Del: {del_min:.1f}-{del_max:.1f}%, Dup: {dup_min:.1f}-{dup_max:.1f}%")
+            logger.info(f"Using dynamic heteroplasmy scale - Del: {del_min:.1f}-{del_max:.1f}%, Dup: {dup_min:.1f}-{dup_max:.1f}%")
         
         # Create figure
         fig = plt.figure(figsize=figsize)
@@ -495,7 +498,7 @@ class CircularPlotter:
                 # Use gradient coloring for BL events based on heteroplasmy
                 color = get_lime_green_color(het_val, bl_min, bl_max)
                 alpha = get_continuous_alpha(het_val, bl_min, bl_max)
-                print(f"DEBUG: Plotting blacklist event at {event['start']}-{event['end']}, het={het_val:.1f}%")
+                logger.debug(f"Plotting blacklist event at {event['start']}-{event['end']}, het={het_val:.1f}%")
             else:
                 if event['final.event'] == 'del':
                     # Use the color function based on del_color parameter
@@ -718,8 +721,8 @@ class CircularPlotter:
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"Plot saved to {output_file}")
-        print(f"Plotted {len(dat_processed)} events")
+        logger.info(f"Plot saved to {output_file}")
+        logger.info(f"Plotted {len(dat_processed)} events")
 
         
     def group_sort_key(self, group_id):
@@ -732,10 +735,10 @@ class CircularPlotter:
             elif prefix == 'BL':
                 return (1000, int(number))
             else:
-                print(f"WARNING: Unexpected group ID format: {group_id}")
+                logger.warning(f"Unexpected group ID format: {group_id}")
                 return (9999, int(number))
         else:
-            print(f"WARNING: Could not parse group ID: {group_id}")
+            logger.warning(f"Could not parse group ID: {group_id}")
             return (9999, 0)
 
 

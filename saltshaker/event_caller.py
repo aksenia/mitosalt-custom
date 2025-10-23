@@ -10,7 +10,11 @@ import numpy as np
 from pathlib import Path
 from Bio import SeqIO
 import warnings
+import logging
+
 warnings.filterwarnings('ignore')
+
+logger = logging.getLogger(__name__)
 
 
 class EventCaller:
@@ -70,11 +74,11 @@ class EventCaller:
         """
         # Check if cluster file is empty
         if Path(cluster_file).stat().st_size == 0:
-            print("Empty cluster file, no events to plot")
+            logger.warning("Empty cluster file, no events to plot")
             return pd.DataFrame()
         
         # Load cluster data
-        print(f"Loading cluster file: {cluster_file}")
+        logger.info(f"Loading cluster file: {cluster_file}")
         clusters = pd.read_csv(cluster_file, sep='\t', header=None)
         clusters.columns = ['cluster', 'read', 'del.start', 'del.end', 'lfstart', 'lfend', 'nread', 'tread', 'perc']
         clusters = clusters[~clusters['cluster'].isna()]
@@ -83,7 +87,7 @@ class EventCaller:
         sample_name = Path(cluster_file).name.replace('.cluster', '')
         clusters['sample'] = sample_name
         
-        print(f"Loaded {len(clusters)} clusters")
+        logger.info(f"Loaded {len(clusters)} clusters")
         
         # Calculate medians and ranges
         def calculate_median(x):
@@ -130,10 +134,10 @@ class EventCaller:
                 })
         
         res_read = pd.DataFrame(res_read_data)
-        print(f"Expanded to {len(res_read)} individual read records")
+        logger.debug(f"Expanded to {len(res_read)} individual read records")
         
         # Load breakpoint data exactly like R script
-        print(f"Loading breakpoint file: {breakpoint_file}")
+        logger.info(f"Loading breakpoint file: {breakpoint_file}")
         bp_raw = pd.read_csv(breakpoint_file, sep='\t', header=None)
         
         # Take columns 2,4,5,10 (R uses 1-based indexing, so Python is 1,3,4,9)
@@ -141,26 +145,26 @@ class EventCaller:
         bp.columns = ['read', 'del.start', 'del.end', 'dloop']
         bp = bp[~bp['read'].isna()]
         
-        print(f"Loaded {len(bp)} breakpoint records")
+        logger.info(f"Loaded {len(bp)} breakpoint records")
         
         # Merge res.read with bp 
         res_read_bp = pd.merge(res_read, bp, on='read', how='inner')
-        print(f"After merge with breakpoints: {len(res_read_bp)} records")
+        logger.debug(f"After merge with breakpoints: {len(res_read_bp)} records")
         
         if len(res_read_bp) == 0:
-            print("No matching reads found between clusters and breakpoints")
+            logger.warning("No matching reads found between clusters and breakpoints")
             return pd.DataFrame()
         
         # Get unique combinations 
         res_read_bp1 = res_read_bp[['sample', 'cluster', 'dloop']].drop_duplicates()
-        print(f"Unique cluster-dloop combinations: {len(res_read_bp1)}")
+        logger.debug(f"Unique cluster-dloop combinations: {len(res_read_bp1)}")
         
         # Final merge 
         final_clusters = pd.merge(clusters, res_read_bp1, on=['sample', 'cluster'], how='inner')
-        print(f"Final clusters after merge: {len(final_clusters)}")
+        logger.info(f"Final clusters after merge: {len(final_clusters)}")
         
         if len(final_clusters) == 0:
-            print("No clusters remained after merging with breakpoint data")
+            logger.warning("No clusters remained after merging with breakpoint data")
             return pd.DataFrame()
         
         # Calculate delsize 
@@ -174,14 +178,14 @@ class EventCaller:
                 final_clusters.loc[dloop_mask, 'del.start.median']
             )
         
-        print(f"Calculated delsize for {len(final_clusters)} events")
+        logger.debug(f"Calculated delsize for {len(final_clusters)} events")
         
         # Filter by heteroplasmy 
         final_clusters = final_clusters[final_clusters['perc'] >= self.heteroplasmy_limit]
-        print(f"Events after heteroplasmy filter (>={self.heteroplasmy_limit}): {len(final_clusters)}")
+        logger.info(f"Events after heteroplasmy filter (>={self.heteroplasmy_limit}): {len(final_clusters)}")
         
         if len(final_clusters) == 0:
-            print("No events above heteroplasmy threshold")
+            logger.warning("No events above heteroplasmy threshold")
             return pd.DataFrame()
         
         return final_clusters
@@ -199,8 +203,8 @@ class EventCaller:
         3. Check overlap with OriL (light strand origin)
         4. Events overlapping origins are reclassified as duplications
         """
-        print(f"Starting classification with {len(clusters)} events")
-        print(f"OriH: {self.ori_h}, OriL: {self.ori_l}")
+        logger.info(f"Starting classification with {len(clusters)} events")
+        logger.debug(f"OriH: {self.ori_h}, OriL: {self.ori_l}")
         
         # Classification: Start with all as deletions
         clusters['final.event'] = 'del'
@@ -229,7 +233,7 @@ class EventCaller:
                     clusters.loc[i, 'final.event'] = 'dup'
         
         after_orih = (clusters['final.event'] == 'dup').sum()
-        print(f"After OriH: {after_orih} events classified as dup")
+        logger.debug(f"After OriH: {after_orih} events classified as dup")
         
         # Second loop: OriL classification (coordinate swapping for dloop=='yes')
         for i in clusters.index:
@@ -264,7 +268,7 @@ class EventCaller:
         # Final counts
         del_count = (clusters['final.event'] == 'del').sum()
         dup_count = (clusters['final.event'] == 'dup').sum()
-        print(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
+        logger.info(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
         
         return clusters
     
@@ -295,10 +299,10 @@ class EventCaller:
             events['seq2'] = flanking_results['seq2']
             events['seq'] = flanking_results['seq']
             
-            print(f"  Sample seq values in events after assignment: {events['seq'].head().tolist()}")
+            logger.debug(f"  Sample seq values in events after assignment: {events['seq'].head().tolist()}")
             
         except Exception as e:
-            print(f"Warning: Flanking sequence analysis failed: {e}")
+            logger.warning(f"Flanking sequence analysis failed: {e}")
             import traceback
             traceback.print_exc()
             events['seq1'] = 'NA'
@@ -342,7 +346,7 @@ class EventCaller:
             seq_result = "NA"
             
             if len(a) < 31 or len(b) < 31:
-                print(f"SKIP: Sequences too short (need 31bp)")
+                logger.debug("SKIP: Sequences too short (need 31bp)")
                 results.append({'seq1': bp_res, 'seq2': bp1_res, 'seq': seq_result})
                 continue
                         

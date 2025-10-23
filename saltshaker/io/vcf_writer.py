@@ -5,6 +5,9 @@ Outputs structural variants in VCF 4.3 format
 
 from datetime import datetime
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class VCFWriter:
@@ -48,10 +51,10 @@ class VCFWriter:
             for _, event in events_df.iterrows():
                 vcf_line = self._event_to_vcf(event)
                 f.write(vcf_line + "\n")
-        
-        print(f"VCF output saved to {output_file}")
-        print(f"Wrote {len(events_df)} events in VCF format")
-    
+
+        logger.info(f"VCF output saved to {output_file}")
+        logger.info(f"Wrote {len(events_df)} events in VCF format")
+
     def _write_header(self, f, genome_length):
         """Write VCF header"""
         # File format

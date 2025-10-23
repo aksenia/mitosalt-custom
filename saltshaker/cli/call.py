@@ -2,9 +2,12 @@
 
 import numpy as np
 from pathlib import Path
+import logging
 
 from ..event_caller import EventCaller
 from ..io import BlacklistReader, write_tsv, write_intermediate
+
+logger = logging.getLogger(__name__)
 
 
 def add_parser(subparsers):
@@ -55,7 +58,7 @@ def add_parser(subparsers):
 
 def run(args):
     """Execute call subcommand"""
-    print("=== SaltShaker: Event Calling ===\n")
+    logger.info("=== SaltShaker: Event Calling ===")
     
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -65,8 +68,8 @@ def run(args):
     display_tsv = output_dir / f"{args.prefix}.saltshaker_call.tsv"
     intermediate_tsv = output_dir / f"{args.prefix}.saltshaker_call_metadata.tsv"
     
-    print(f"Sample prefix: {args.prefix}")
-    print(f"Output directory: {output_dir}")
+    logger.info(f"Sample prefix: {args.prefix}")
+    logger.info(f"Output directory: {output_dir}")
     
     # Initialize EventCaller
     event_caller = EventCaller(
@@ -84,11 +87,11 @@ def run(args):
             # Use built-in default blacklist
             from ..data import DEFAULT_MT_BLACKLIST
             blacklist_file = DEFAULT_MT_BLACKLIST
-            print(f"Using default MT blacklist regions")
+            logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
             blacklist_file = args.blacklist
-            print(f"Using custom blacklist: {blacklist_file}")
+            logger.info(f"Using custom blacklist: {blacklist_file}")
         
         # Validate file exists
         if not Path(blacklist_file).exists():
@@ -96,16 +99,16 @@ def run(args):
         
         try:
             blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
-            print(f"Loaded {len(blacklist_regions)} blacklist regions")
+            logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
         except Exception as e:
-            print(f"Warning: Could not load blacklist file: {e}")
+            logger.warning(f"Could not load blacklist file: {e}")
             blacklist_regions = []
     
     # Call events
     events = event_caller.call_events(args.cluster, args.breakpoint)
     
     if len(events) == 0:
-        print("No events called")
+        logger.warning("No events called")
         return
     
     # Calculate final coordinates
@@ -136,6 +139,6 @@ def run(args):
     # Write display TSV (formatted, human-readable)
     write_tsv(events, str(display_tsv), args.genome_length, blacklist_regions)
     
-    print(f"\nCalled {len(events)} events")
-    print(f"Display TSV: {display_tsv}")
-    print(f"Intermediate TSV: {intermediate_tsv} (use for classify)")
+    logger.info(f"Called {len(events)} events")
+    logger.info(f"Display TSV: {display_tsv}")
+    logger.info(f"Intermediate TSV: {intermediate_tsv} (use for classify)")
