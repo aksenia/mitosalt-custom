@@ -37,7 +37,8 @@ class CircularPlotter:
         self.dup_cmap = None
 
     def plot(self, events, output_file, blacklist_regions=None, figsize=(16, 10),
-             direction='counterclockwise', del_color='red', dup_color='blue'):
+             direction='counterclockwise', del_color='red', dup_color='blue',
+             gene_annotations=None):
         """
         Create circular plot of mitochondrial events
         
@@ -49,6 +50,7 @@ class CircularPlotter:
             direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
             del_color: Color scheme for deletions - 'red' or 'blue' (default: 'blue')
             dup_color: Color scheme for duplications - 'red' or 'blue' (default: 'red')
+            gene_annotations: List of gene annotation dicts from BED file (optional)
 
         """
         
@@ -300,7 +302,9 @@ class CircularPlotter:
         # Create figure
         fig = plt.figure(figsize=figsize)
         ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
-        ax.set_ylim(0, dynamic_radius + 30)
+        # Set y-limit to accommodate gene track if present
+        max_radius = dynamic_radius + 90 if gene_annotations else dynamic_radius + 30
+        ax.set_ylim(0, max_radius)
         ax.set_theta_zero_location('N')
 
         # Set direction based on parameter
@@ -315,14 +319,62 @@ class CircularPlotter:
         circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
                             color='gray', transform=ax.transData._b)
         ax.add_patch(circle)
+
+        # Draw gene annotation track (outer ring) - NEW CODE STARTS HERE
+        if gene_annotations:
+            gene_track_inner = dynamic_radius + 25  # Start 25 units outside main circle (was 15)
+            gene_track_outer = dynamic_radius + 40  # 15 units tall (was 20)
+            gene_track_mid = (gene_track_inner + gene_track_outer) / 2
+            
+            # Draw track background circle
+            track_bg = patches.Circle((0, 0), gene_track_outer, fill=False, linewidth=1,
+                                     color='lightgray', linestyle='--', alpha=0.5,
+                                     transform=ax.transData._b)
+            ax.add_patch(track_bg)
+            
+            # Draw each gene
+            for gene in gene_annotations:
+                start_deg = np.radians(358 * gene['start'] / self.genome_length)
+                end_deg = np.radians(358 * gene['end'] / self.genome_length)
+                
+                # Gene arc
+                theta = np.linspace(start_deg, end_deg, 50)
+                ax.fill_between(theta, gene_track_inner, gene_track_outer,
+                                color=gene['color'], alpha=0.8, linewidth=0)
+                
+                # Gene name (for larger genes only to avoid clutter)
+                gene_size = gene['end'] - gene['start']
+                if gene_size > 200:  # Only label genes >200bp
+                    mid_deg = (start_deg + end_deg) / 2
+                    label_radius = gene_track_outer + 12  # Place just outside the track
+                    
+                    # Calculate rotation for text to be horizontal and readable
+                    # Convert back to degrees for rotation calculation
+                    rotation_deg = np.degrees(mid_deg)
+                    
+                    # When in clockwise mode, we need to mirror the angle
+                    # because set_theta_direction(-1) mirrors the coordinate system
+                    if direction == 'clockwise':
+                        # Mirror the angle: 0° stays 0°, 90° becomes 270°, etc.
+                        rotation_deg = 360 - rotation_deg
+                    
+                    # Now apply the standard logic: flip text on bottom half
+                    if rotation_deg > 90 and rotation_deg < 270:
+                        rotation_deg = rotation_deg + 180
+                    
+                    ax.text(mid_deg, label_radius, gene['name'],
+                           rotation=rotation_deg, ha='center', va='center',
+                           fontsize=7, weight='bold', color='black')
+
+        
+        # Draw separator circle between del and dup radii (always present)
+        separator_circle = patches.Circle((0, 0), blacklist_radius + 15, fill=False, linewidth=2, 
+                                        color='lightgray', linestyle='--', alpha=0.7,
+                                        transform=ax.transData._b)
+        ax.add_patch(separator_circle)
         
         # Add blacklist regions
         if blacklist_regions:
-            separator_circle = patches.Circle((0, 0), blacklist_radius + 15, fill=False, linewidth=2, 
-                                            color='lightgray', linestyle='--', alpha=0.7,
-                                            transform=ax.transData._b)
-            ax.add_patch(separator_circle)
-            
             # Find actual minimum event radius for inward lines
             min_event_radius = dat_processed['radius'].min() if len(dat_processed) > 0 else 50
             
@@ -352,12 +404,14 @@ class CircularPlotter:
                     ax.plot([start_deg, start_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
                     ax.plot([end_deg, end_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
         
-        # Add position markers
+        # Add position markers - adjusted for gene track spacing
         positions = np.arange(0, self.genome_length, 1000)
         for pos in positions:
             deg = np.radians(358 * pos / self.genome_length)
-            ax.plot([deg, deg], [dynamic_radius, dynamic_radius + 5], color='gray', linewidth=1)
-            ax.text(deg, dynamic_radius + 15, f'{pos//1000}', ha='center', va='center', 
+            marker_start = gene_track_outer + 5 if gene_annotations else dynamic_radius
+            text_offset = 18 if gene_annotations else 12  # More space when genes present
+            ax.plot([deg, deg], [marker_start, marker_start + 5], color='gray', linewidth=1)
+            ax.text(deg, marker_start + text_offset, f'{pos//1000}', ha='center', va='center', 
                 fontsize=9, color='gray')
         
         # Color functions
@@ -381,6 +435,18 @@ class CircularPlotter:
             blue = 0.85 * (1 - norm)
             return (red, green, blue)
 
+        def get_lime_green_color(het_val, min_het, max_het):
+            """Lime-green gradient for BL-crossing events"""
+            if max_het > min_het:
+                norm = (het_val - min_het) / (max_het - min_het)
+            else:
+                norm = 0.5
+            # Light lime-green (0.6, 1.0, 0.4) to dark green (0.0, 0.5, 0.0)
+            red = 0.6 * (1 - norm)
+            green = 1.0 - 0.5 * norm
+            blue = 0.4 * (1 - norm)
+            return (red, green, blue)
+
         def get_continuous_alpha(het_val, min_het, max_het):
             if max_het > min_het:
                 norm = (het_val - min_het) / (max_het - min_het)
@@ -401,10 +467,14 @@ class CircularPlotter:
                 print(f"DEBUG: Plotting blacklist event at {event['start']}-{event['end']}")
             else:
                 if event['final.event'] == 'del':
-                    color = get_pure_blue_color(het_val, del_min, del_max)
+                    # Use the color function based on del_color parameter
+                    del_color_func = get_pure_red_color if del_color == 'red' else get_pure_blue_color
+                    color = del_color_func(het_val, del_min, del_max)
                     alpha = get_continuous_alpha(het_val, del_min, del_max)
                 else:
-                    color = get_pure_red_color(het_val, dup_min, dup_max) 
+                    # Use the color function based on dup_color parameter
+                    dup_color_func = get_pure_red_color if dup_color == 'red' else get_pure_blue_color
+                    color = dup_color_func(het_val, dup_min, dup_max) 
                     alpha = get_continuous_alpha(het_val, dup_min, dup_max)
                 
             theta = np.linspace(deg1_rad, deg2_rad, 100)
@@ -447,20 +517,44 @@ class CircularPlotter:
                                 alpha=0.9, edgecolor=label_color, linewidth=0.8))
 
         # LEGENDS IN SEPARATE AREAS OF THE FIGURE                 
-        # 1. EVENT COUNT SUMMARY - Top left area with colored BL text
-        fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
-                fontsize=13, weight='bold',
-                bbox=dict(boxstyle="round,pad=0.5", facecolor='white', alpha=0.9, edgecolor='gray'),
-                verticalalignment='top')
-
+        # 1. EVENT COUNT SUMMARY - Unified box with all counts
+        # Draw the box first
+        from matplotlib.patches import FancyBboxPatch
+        
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
-            # Add BL-crossing text in green below main counts
-            fig.text(0.06, 0.8, f"BL-crossing Del: {bl_del_count}\nBL-crossing Dup: {bl_dup_count}", 
-                    fontsize=13, weight='bold', color=(0.2, 0.8, 0.2),
-                    verticalalignment='top')
+            # Box for 2 lines
+            box_height = 0.065
+            box = FancyBboxPatch((0.055, 0.80), 0.17, box_height,
+                                boxstyle="round,pad=0.008", 
+                                facecolor='white', edgecolor='gray',
+                                alpha=0.9, transform=fig.transFigure)
+            fig.patches.append(box)
+            
+            # First line: Del and Dup counts
+            fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
+                    fontsize=13, weight='bold', verticalalignment='top')
+            
+            # Second line - all in lime-green
+            y_bl = 0.820
+            x_start = 0.06
+
+            # Entire BL line in green for clarity
+            fig.text(x_start, y_bl, f"BL Del: {bl_del_count}  BL Dup: {bl_dup_count}", 
+                    fontsize=13, weight='bold', color=(0.2, 0.8, 0.2), verticalalignment='top')
+        else:
+            # Single line box
+            box = FancyBboxPatch((0.055, 0.835), 0.14, 0.035,
+                                boxstyle="round,pad=0.008", 
+                                facecolor='white', edgecolor='gray',
+                                alpha=0.9, transform=fig.transFigure)
+            fig.patches.append(box)
+            
+            fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
+                    fontsize=13, weight='bold', verticalalignment='top')
+        
         
         def draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width, 
-                                events, min_val, max_val, label, color_func, label_color, offset_x=0):
+                                events, min_val, max_val, label, color_func, label_color, offset_x=0, is_bl=False):
             """Draw a single gradient legend bar with labels"""
             if len(events) == 0:
                 return
@@ -489,45 +583,94 @@ class CircularPlotter:
             fig.text(label_x, legend_y + legend_height/2 + 0.01, label, 
                     fontsize=10, ha='center', weight='bold', color=label_color)
             
-            # Min/max values
+            # Min/max values - all on the right side, closer to bars
+            # Use 2 decimal places for BL values, 1 for Del/Dup
+            decimal_places = 2 if is_bl else 1
             for pos, val in [(1, max_val), (0, min_val)]:
                 y_pos = legend_y - legend_height/2 + pos * legend_height
-                # Left-align for left bar, right-align for right bar
-                if offset_x == 0:  # Left bar
-                    fig.text(legend_x - 0.015, y_pos, f"{val:.1f}%", 
-                            fontsize=10, va='center', ha='right', color=label_color)
-                else:  # Right bar
-                    fig.text(legend_x + offset_x + bar_width + 0.015, y_pos, f"{val:.1f}%", 
-                            fontsize=10, va='center', ha='left', color=label_color)
+                fig.text(legend_x + offset_x + bar_width + 0.005, y_pos, f"{val:.{decimal_places}f}", 
+                        fontsize=9, va='center', ha='left', color=label_color)
 
-
-        # Then in the main code, replace the entire legend section with:
 
         # 2. SEPARATE GRADIENT LEGENDS - independently scaled
         legend_x = 0.08
-        legend_y = 0.5
-        legend_height = 0.35
-        legend_width = 0.045
-
-        bar_gap = 0.02
-        bar_width = (legend_width - bar_gap) / 2
+        legend_y = 0.48
+        legend_height = 0.30
+        
+        # Calculate BL events if applicable
+        bl_events = pd.DataFrame()
+        bl_min = 0
+        bl_max = 0
+        show_bl_bar = False
+        
+        if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
+            bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
+            if len(bl_events) > 0:
+                bl_min = bl_events['value'].min()
+                bl_max = bl_events['value'].max()
+                show_bl_bar = True
+        
+        # Determine number of bars and calculate widths with more spacing
+        num_bars = 3 if show_bl_bar else 2
+        bar_gap = 0.030  # Increased for even more space
+        legend_width = 0.04 if num_bars == 2 else 0.070  # Adjusted for new spacing
+        bar_width = (legend_width - (num_bars - 1) * bar_gap) / num_bars
 
         # Choose color functions based on parameters
         del_color_func = get_pure_red_color if del_color == 'red' else get_pure_blue_color
         dup_color_func = get_pure_red_color if dup_color == 'red' else get_pure_blue_color
 
-        # Draw deletion legend (left bar)
+        # Draw deletion legend (first bar)
         draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
                             del_events, del_min, del_max, "Del", del_color_func, del_label_color, offset_x=0)
 
-        # Draw duplication legend (right bar)
+        # Draw duplication legend (second bar)
         draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
                             dup_events, dup_min, dup_max, "Dup", dup_color_func, dup_label_color, 
                             offset_x=bar_width + bar_gap)
 
-        # Heteroplasmy label below both bars
-        fig.text(legend_x + legend_width/2, legend_y - legend_height/2 - 0.03, 
-                "Heteroplasmy (%)", fontsize=13, weight='bold', ha='center')
+        # Draw BL legend (third bar) if applicable
+        if show_bl_bar:
+            bl_offset = 2 * (bar_width + bar_gap)
+            draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
+                                bl_events, bl_min, bl_max, "BL", get_lime_green_color, (0.2, 0.8, 0.2), 
+                                offset_x=bl_offset, is_bl=True)
+
+        # Heteroplasmy label above all bars
+        fig.text(legend_x + legend_width/2, legend_y + legend_height/2 + 0.05, 
+                "Heteroplasmy (%)", fontsize=11, weight='bold', ha='center')
+        
+        # Gene annotation legend (if present) - moved to left side
+        if gene_annotations:
+            legend_items = [
+                ('Protein-coding', (0, 0.5, 0)),      # Green
+                ('tRNA', (1, 1, 0)),                  # Yellow
+                ('rRNA', (0.5, 0, 0.5))               # Purple
+            ]
+            
+            # Position on left side, below the heteroplasmy legend
+            legend_y_start = legend_y - legend_height/2 - 0.1  # Below heteroplasmy label
+            legend_box_size = 0.025
+            
+            # Header for gene legend - centered and aligned with Heteroplasmy title
+            fig.text(legend_x + legend_width/2, legend_y_start + 0.04, 
+                    "Genes", fontsize=11, weight='bold', ha='center')
+            
+            for i, (label, color) in enumerate(legend_items):
+                y_pos = legend_y_start - i * 0.04
+                
+                # Color box
+                rect = plt.Rectangle((legend_x, y_pos), legend_box_size, 0.025,
+                                    facecolor=color, alpha=0.8,
+                                    transform=fig.transFigure)
+                fig.patches.append(rect)
+                
+                # Label
+                fig.text(legend_x + legend_box_size + 0.01, y_pos + 0.0125,
+                        label, fontsize=9, va='center')
+        
+        ax.grid(False)
+        ax.set_xticklabels([])
 
         
         ax.grid(False)
@@ -566,7 +709,7 @@ class CircularPlotter:
 
 def plot_circular(events, output_file, genome_length, blacklist_regions=None, 
                   figsize=(16, 10), direction='counterclockwise', 
-                  del_color='red', dup_color='blue'):
+                  del_color='red', dup_color='blue', gene_annotations=None):
     """
     Convenience function to create circular plot
     
@@ -579,6 +722,7 @@ def plot_circular(events, output_file, genome_length, blacklist_regions=None,
         direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
         del_color: Color for deletions - 'red' or 'blue' (default: 'red')
         dup_color: Color for duplications - 'red' or 'blue' (default: 'blue')
+        gene_annotations: List of gene annotation dicts (optional)
     """
     plotter = CircularPlotter(genome_length)
-    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color)
+    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color, gene_annotations)

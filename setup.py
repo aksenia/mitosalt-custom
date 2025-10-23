@@ -23,6 +23,10 @@ setuptools.setup(
         "biopython>=1.78",
     ],
     packages=setuptools.find_packages(),
+    package_data={
+        'saltshaker': ['data/*.bed'],
+    },
+    include_package_data=True,
     entry_points={
         "console_scripts": [
             "saltshaker=saltshaker.__main__:main",

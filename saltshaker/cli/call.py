@@ -46,9 +46,9 @@ def add_parser(subparsers):
     parser.add_argument('-f', '--flank-size', type=int, default=15,
                        help='Flanking sequence size in bp (default: 15)')
     
-    # Optional filters
-    parser.add_argument('-b', '--blacklist',
-                       help='BED file with regions to exclude')
+    # Optional blacklist
+    parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
+                       help='Enable blacklist regions. Use built-in default if no file specified, or provide custom BED file path')
     
     return parser
 
@@ -77,11 +77,25 @@ def run(args):
         flank_size=args.flank_size
     )
     
-    # Load blacklist if provided
+    # Load blacklist regions
     blacklist_regions = None
-    if args.blacklist:
+    if args.blacklist is not None:
+        if args.blacklist == 'default':
+            # Use built-in default blacklist
+            from ..data import DEFAULT_MT_BLACKLIST
+            blacklist_file = DEFAULT_MT_BLACKLIST
+            print(f"Using default MT blacklist regions")
+        else:
+            # Use user-provided file
+            blacklist_file = args.blacklist
+            print(f"Using custom blacklist: {blacklist_file}")
+        
+        # Validate file exists
+        if not Path(blacklist_file).exists():
+            raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
+        
         try:
-            blacklist_regions = BlacklistReader.load_blacklist_regions(args.blacklist)
+            blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
             print(f"Loaded {len(blacklist_regions)} blacklist regions")
         except Exception as e:
             print(f"Warning: Could not load blacklist file: {e}")

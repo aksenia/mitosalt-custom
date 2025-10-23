@@ -104,3 +104,43 @@ class IntermediateReader:
 def read_intermediate(filepath):
     """Convenience function"""
     return IntermediateReader.read(filepath)
+
+class GeneAnnotationReader:
+    """Read mitochondrial gene annotations from BED file"""
+    
+    @staticmethod
+    def load_gene_annotations(bed_file):
+        """
+        Load gene annotations from BED file
+        
+        Expected format:
+        chr  start  end  name  score  strand  thickStart  thickEnd  itemRgb
+        chrM 576    647  MT-TF 0      +       576         647       255,255,0
+        
+        Returns:
+            List of dicts with gene info
+        """
+        annotations = []
+        
+        with open(bed_file, 'r') as f:
+            for line in f:
+                if line.startswith('#') or not line.strip():
+                    continue
+                
+                fields = line.strip().split('\t')
+                if len(fields) < 9:
+                    continue
+                
+                # Parse RGB color
+                rgb = tuple(int(x)/255.0 for x in fields[8].split(','))
+                
+                annotations.append({
+                    'chr': fields[0],
+                    'start': int(fields[1]),
+                    'end': int(fields[2]),
+                    'name': fields[3],
+                    'strand': fields[5] if len(fields) > 5 else '+',
+                    'color': rgb
+                })
+        
+        return annotations

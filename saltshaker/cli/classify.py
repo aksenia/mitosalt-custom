@@ -25,8 +25,10 @@ def add_parser(subparsers):
     # Output options
     parser.add_argument('--vcf', action='store_true',
                        help='Also output classified events in VCF format')
-    parser.add_argument('-b', '--blacklist',
-                       help='BED file with regions to exclude')
+    
+    # Optional blacklist
+    parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
+                       help='Enable blacklist regions. Use built-in default if no file specified, or provide custom BED file path')
     
     # Classification parameters (optional, use config defaults)
     parser.add_argument('--high-het', type=float,
@@ -72,10 +74,24 @@ def run(args):
     print(f"Loaded {len(events)} events")
     print(f"Genome length: {genome_length}")
     
-    # Load blacklist
+    # Load blacklist regions
     blacklist_regions = None
-    if args.blacklist:
-        blacklist_regions = BlacklistReader.load_blacklist_regions(args.blacklist)
+    if args.blacklist is not None:
+        if args.blacklist == 'default':
+            # Use built-in default blacklist
+            from ..data import DEFAULT_MT_BLACKLIST
+            blacklist_file = DEFAULT_MT_BLACKLIST
+            print(f"Using default MT blacklist regions")
+        else:
+            # Use user-provided file
+            blacklist_file = args.blacklist
+            print(f"Using custom blacklist: {blacklist_file}")
+        
+        # Validate file exists
+        if not Path(blacklist_file).exists():
+            raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
+        
+        blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
         print(f"Loaded {len(blacklist_regions)} blacklist regions")
     
     # Create config with CLI overrides

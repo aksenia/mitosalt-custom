@@ -26,6 +26,9 @@ dependencies = [
 [project.scripts]
 saltshaker = "saltshaker.__main__:main"
 
+[tool.setuptools.package-data]
+saltshaker = ["data/*.bed"]
+
 [tool.ruff]
 line-length = 100
 target-version = "py38"

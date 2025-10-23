@@ -2,8 +2,10 @@
 
 from pathlib import Path
 
+from logistro import parser
+
 from ..visualizer import plot_circular
-from ..io import BlacklistReader, read_intermediate
+from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
 
 
 def add_parser(subparsers):
@@ -22,17 +24,19 @@ def add_parser(subparsers):
                        help='Output directory (default: same as input-dir)')
     
     # Optional
-    parser.add_argument('-b', '--blacklist',
-                       help='BED file with regions to exclude')
     parser.add_argument('--figsize', nargs=2, type=int, default=[16, 10],
                        help='Figure size (width height), default: 16 10')    
     parser.add_argument('--direction', choices=['clockwise', 'counterclockwise'],
                        default='counterclockwise',
                        help='Plot direction (default: counterclockwise, field standard)')
-    parser.add_argument('--del-color', choices=['red', 'blue'], default='blue',
-                       help='Color scheme for deletions (default: red, germline standard)')
-    parser.add_argument('--dup-color', choices=['red', 'blue'], default='red',
-                       help='Color scheme for duplications (default: blue, germline standard)')
+    parser.add_argument('--del-color', choices=['red', 'blue'], default='red',
+                       help='Color scheme for deletions (default: red)')
+    parser.add_argument('--dup-color', choices=['red', 'blue'], default='blue',
+                       help='Color scheme for duplications (default: blue)')
+    parser.add_argument('--genes', nargs='?', const='default', metavar='BED_FILE',
+                        help='Enable gene annotations. Use built-in default if no file specified, or provide custom BED file path')
+    parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
+                        help='Enable blacklist regions. Use built-in default if no file specified, or provide custom BED file path')
 
     
     return parser
@@ -54,6 +58,8 @@ def run(args):
     print(f"Sample prefix: {args.prefix}")
     print(f"Input: {input_file}")
     print(f"Output: {plot_file}")
+    print(f"Direction: {args.direction}")
+    print(f"Del color: {args.del_color}, Dup color: {args.dup_color}")
     
     # Check input exists
     if not input_file.exists():
@@ -64,13 +70,48 @@ def run(args):
     events, genome_length = read_intermediate(str(input_file))
     print(f"Loaded {len(events)} events")
     
-    # Load blacklist
+    # Load blacklist regions
     blacklist_regions = None
-    if args.blacklist:
-        blacklist_regions = BlacklistReader.load_blacklist_regions(args.blacklist)
+    if args.blacklist is not None:
+        if args.blacklist == 'default':
+            # Use built-in default blacklist
+            from ..data import DEFAULT_MT_BLACKLIST
+            blacklist_file = DEFAULT_MT_BLACKLIST
+            print(f"Using default MT blacklist regions")
+        else:
+            # Use user-provided file
+            blacklist_file = args.blacklist
+            print(f"Using custom blacklist: {blacklist_file}")
+        
+        # Validate file exists
+        if not Path(blacklist_file).exists():
+            raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
+        
+        blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
         print(f"Loaded {len(blacklist_regions)} blacklist regions")
-    
+
+    # Load gene annotations
+    gene_annotations = None
+    if args.genes is not None:
+        if args.genes == 'default':
+            # Use built-in default annotations
+            from ..data import DEFAULT_MT_GENES
+            gene_file = DEFAULT_MT_GENES
+            print(f"Using default hg38 MT gene annotations")
+        else:
+            # Use user-provided file
+            gene_file = args.genes
+            print(f"Using custom gene annotations: {gene_file}")
+        
+        # Validate file exists
+        if not Path(gene_file).exists():
+            raise FileNotFoundError(f"Gene annotation file not found: {gene_file}")
+        
+        gene_annotations = GeneAnnotationReader.load_gene_annotations(gene_file)
+        print(f"Loaded {len(gene_annotations)} gene annotations")
+
     # Create plot
+    print(f"\nGenerating plot...")
     plot_circular(
         events,
         str(plot_file),
@@ -79,8 +120,9 @@ def run(args):
         figsize=tuple(args.figsize),
         direction=args.direction,
         del_color=args.del_color,
-        dup_color=args.dup_color
+        dup_color=args.dup_color,
+        gene_annotations=gene_annotations
     )
     
     
-    print(f"\nPlot saved: {plot_file}")
+    print(f"\n✓ Plot saved: {plot_file}")

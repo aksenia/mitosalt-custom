@@ -8,7 +8,7 @@ A Python package for classifying and visualizing mitochondrial structural varian
 
 ## Overview
 
-SaltShaker is a Python port and extension of the original MitoSAlt `delplot.R` visualization script. The package provides three modular commands for a flexible analysis workflow:
+SAltShaker is a Python port and extension of the original MitoSAlt `delplot.R` visualization script. The package provides three modular commands for a flexible analysis workflow:
 
 - **Event calling**: Direct Python port of the original R script's deletion/duplication classification logic
 - **Pattern classification**: Rule-based decision tree to distinguish single from mouse multiple type of events
@@ -45,7 +45,9 @@ saltshaker call \
     --ori-l-start 5730 --ori-l-end 5763 \   # light strand origin
     -H 0.01 \                               # heteroplasmy threshold
     -f 15 \                                 # flanking sequence size (bp)
-    -b blacklist.bed                        # optional: regions to exclude
+    --blacklist                 # Optional: enable with default MT blacklist, OR
+    --blacklist custom_bl.bed   # Optional: enable with custom BED file
+Out
 ```
 
 **Outputs:**
@@ -89,8 +91,9 @@ saltshaker classify \
     --prefix sample1 \              # Sample identifier (matches call output)
     --input-dir results/ \          # Input directory with .saltshaker_call.tsv
     --output-dir results/ \         # Output directory (default: same as input-dir)
-    -b blacklist.bed \              # Optional: blacklist regions
-    --vcf \                         # Optional: also output VCF format
+    --blacklist                 # Optional: enable with default MT blacklist, OR
+    --blacklist custom_bl.bed   # Optional: enable with custom BED file
+   --vcf \                         # Optional: also output VCF format
     --high-het 20 \                 # Optional: high heteroplasmy threshold % (default: 20)
     --noise 1.0 \                   # Optional: noise threshold % (default: 1.0)
     --radius 600 \                  # Optional: spatial clustering radius bp (default: 600)
@@ -132,34 +135,33 @@ Generates circular genome plots based on the original R script visualization wit
 
 ```bash
 saltshaker plot \
-    --prefix sample1 \              # Sample identifier (matches classify output)
-    --input-dir results/ \          # Input directory with .saltshaker_classify_metadata.tsv
-    --output-dir results/plots/ \   # Output directory (default: same as input-dir)
-    -b blacklist.bed \              # Optional: blacklist regions
-    --figsize 16 10 \               # Optional: figure size width height (default: 16 10)
-    --direction counterclockwise \  # Optional: clockwise or counterclockwise (default: counterclockwise)
-    --del-color red \               # Optional: deletion color - red or blue (default: blue)
-    --dup-color blue                # Optional: duplication color - red or blue (default: red)
+    --prefix sample1 \
+    --input-dir results/ \
+    --output-dir results/plots/ \  # Optional: default is input-dir
+    --genes \                       # Optional: enable with default MT genes, OR
+    --genes custom_genes.bed \      # Optional: enable with custom BED file
+    --blacklist \                   # Optional: enable with default MT blacklist, OR
+    --blacklist custom_bl.bed \     # Optional: enable with custom BED file
+    --figsize 16 10 \               # Optional: width height (default: 16 10)
+    --direction clockwise \  # Optional: clockwise or counterclockwise (default: counterclockwise)
+    --del-color red \               # Optional: red or blue (default: blues)
+    --dup-color blue                # Optional: red or blue (default: red)
+
 ```
 
 **Output:**
 
 - `results/plot/sample.saltshaker.png` - Circular genome visualization
 
-**Visualization features from original R script:**
+**Visualization features:**
 
-- Circular genome representation (default counterclockwise as in original)
-- Color coding by event type (blue/red) - defaults follow the original
-- Heteroplasmy intensity mapping
-- Arc-based event display
-- Coordinate labeling
+- Circular genome with arc-based event display
+- Heteroplasmy gradient coloring
+- Spatial grouping for non-overlapping events
+- Optional gene annotations with track and labels
+- Optional blacklist region marking (BL-crossing events in lime-green)
+- Configurable colors and polar direction
 
-**Enhanced features:**
-
-- Spatial group organization for non-overlapping display
-- Size-based layering (largest to smallest radius)
-- Blacklist region visualization
-- Configurable figure dimensions
 
 ## Input files
 
@@ -251,13 +253,13 @@ saltshaker call \
     -r reference.fasta \
     -g 16569 --ori-h-start 16081 --ori-h-end 407 \
     --ori-l-start 5730 --ori-l-end 5763 \
-    -b blacklist.bed
+    --blacklist
 
 # Step 2: Classify pattern and perform spatial grouping (extended analysis)
 saltshaker classify \
     --prefix sample1 \
     --input-dir results/ \
-    -b blacklist.bed 
+    --blacklist \
     --vcf
 
 # Step 3: Generate visualization (enhanced R script plotting)
@@ -265,7 +267,8 @@ saltshaker plot \
     --prefix sample1 \
     --input-dir results/ \
     --output-dir results/plot/ \
-    -b blacklist.bed
+    --blacklist \
+    --genes
 ```
 
 **Batch processing multiple samples:**
@@ -279,15 +282,16 @@ for sample in sample1 sample2 sample3; do
         -r reference.fasta
         -g 16569 --ori-h-start 16081 --ori-h-end 407 \
         --ori-l-start 5730 --ori-l-end 5763 \
-        -b blacklist.bed
+        --blacklist
     # Classify events
     saltshaker classify --prefix ${sample} \
         --input-dir results/${sample} \
-        -b blacklist.bed
+        --blacklist
     # Plot events
     saltshaker plot --prefix ${sample} \
         --input-dir results/${sample} \
-        -b blacklist.bed
+        --blacklist \
+        --genes
 done
 ```
 
@@ -339,7 +343,7 @@ All commands support:
 - `--output-dir DIR`: Output directory (default: .)
 - `-H, --het-limit FLOAT`: Heteroplasmy threshold (default: 0.01)
 - `-f, --flank-size INT`: Flanking sequence size in bp (default: 15)
-- `-b, --blacklist FILE`: BED file with regions to exclude
+- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 
 ### `classify` command
 
@@ -351,7 +355,7 @@ All commands support:
 **Optional:**
 
 - `--output-dir DIR`: Output directory (default: input-dir)
-- `-b, --blacklist FILE`: BED file with regions to exclude
+- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 - `--vcf`: Also output VCF format
 - `--high-het FLOAT`: High heteroplasmy threshold % (default: 20)
 - `--noise FLOAT`: Noise threshold % (default: 1)
@@ -369,9 +373,10 @@ All commands support:
 **Optional:**
 
 - `--output-dir DIR`: Output directory (default: input-dir)
-- `-b, --blacklist FILE`: BED file with regions to exclude
+- `--genes [FILE]`: Enable gene annotations (default: built-in MT genes; optional: custom BED file)
+- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 - `--figsize WIDTH HEIGHT`: Figure dimensions (default: 16 10)
-- `--direction STR`: Plot direction - 'clockwise' or 'counterclockwise' (default: counterclockwise)
+- `--direction STR`: Plot direction - 'clockwise' or 'counterclockwise' (default: counterclockwise, MitoSAlt original)
 - `--del-color STR`: Deletion color - 'red' or 'blue' (default: blue, MitoSAlt original)
 - `--dup-color STR`: Duplication color - 'red' or 'blue' (default: red, MitoSAlt original)
 
@@ -404,6 +409,10 @@ saltshaker/
     ├── readers.py       # File input (blacklist BED files)
     ├── writers.py       # TSV and summary output
     └── vcf_writer.py    # VCF format output
+└── data/
+    ├── __init__.py      # Default file paths
+    ├── gencode.v49.annotation.MT_genes.bed      # Default MT gene annotations
+    └── mt_blacklist_regions.bed                  # Default MT blacklist regions
 docs/
 └── classification_algorithm.md  # Detailed classification algorithm documentation
 ```
