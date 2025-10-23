@@ -211,13 +211,13 @@ Fixed Scale:
 Human-readable format matching original R script output with columns:
 
 - `sample`: Sample identifier
-- `cluster.id`: Cluster identifier
-- `alt.reads`, `ref.reads`: Read counts
+- `cluster_id`: Cluster identifier
+- `alt_reads`, `ref_reads`: Read counts
 - `heteroplasmy`: Heteroplasmy percentage
-- `del.start.range`, `del.end.range`: Coordinate ranges
-- `del.size`: Event size in base pairs
-- `final.event`: Event type (del/dup)
-- `final.start`, `final.end`: Final coordinates
+- `del_start_range`, `del_end_range`: Coordinate ranges
+- `del_size`: Event size in base pairs
+- `final_event`: Event type (del/dup)
+- `final_start`, `final_end`: Final coordinates
 - `blacklist_crossing`: Flag for blacklist overlap
 - `seq1`, `seq2`, `seq`: Flanking sequences and microhomology
 
