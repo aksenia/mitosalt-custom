@@ -145,7 +145,8 @@ saltshaker plot \
     --figsize 16 10 \               # Optional: width height (default: 16 10)
     --direction clockwise \         # Optional: clockwise or counterclockwise (default: counterclockwise)
     --del-color red \               # Optional: red or blue (default: blues)
-    --dup-color blue                # Optional: red or blue (default: red)
+    --dup-color blue \              # Optional: red or blue (default: red)
+    --scale fixed                   # Optional: dynamic or fixed (default: dynamic)
 
 ```
 
@@ -156,12 +157,26 @@ saltshaker plot \
 **Visualization features:**
 
 - Circular genome with arc-based event display
-- Heteroplasmy gradient coloring
+- Heteroplasmy gradient coloring for all event types (del/dup/BL)
+- Dynamic (min-max) or fixed (0-100%) heteroplasmy scale
 - Spatial grouping for non-overlapping events
 - Optional gene annotations with track and labels
-- Optional blacklist region marking (BL-crossing events in lime-green)
+- Optional blacklist region marking (BL-crossing events in lime-green  gradient)
 - Configurable colors and polar direction
 
+**Color scaling considerations**
+
+```bash
+Example sample with 5-25% heteroplasmy:
+
+Dynamic Scale:
+[████████████████████] ← Colors span full gradient from 5% to 25%
+5%                 25%
+
+Fixed Scale:
+[█████░░░░░░░░░░░░░░░] ← Colors span from 0% to 100%, events appear lighter
+0%               100%
+```
 
 ## Input files
 
@@ -379,6 +394,7 @@ All commands support:
 - `--direction STR`: Plot direction - 'clockwise' or 'counterclockwise' (default: counterclockwise, MitoSAlt original)
 - `--del-color STR`: Deletion color - 'red' or 'blue' (default: blue, MitoSAlt original)
 - `--dup-color STR`: Duplication color - 'red' or 'blue' (default: red, MitoSAlt original)
+- `--scale STR`: Heteroplasmy scale - 'dynamic' (min-max per category) or 'fixed' (0-100%) (default: dynamic)
 
 ## Dependencies
 

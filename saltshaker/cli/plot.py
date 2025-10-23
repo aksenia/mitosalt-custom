@@ -33,6 +33,8 @@ def add_parser(subparsers):
                        help='Color scheme for deletions (default: red)')
     parser.add_argument('--dup-color', choices=['red', 'blue'], default='blue',
                        help='Color scheme for duplications (default: blue)')
+    parser.add_argument('--scale', choices=['dynamic', 'fixed'], default='dynamic',
+                       help='Heteroplasmy color scale: dynamic (min-max per category) or fixed (0-100%%) (default: dynamic)')
     parser.add_argument('--genes', nargs='?', const='default', metavar='BED_FILE',
                         help='Enable gene annotations. Use built-in default if no file specified, or provide custom BED file path')
     parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
@@ -60,6 +62,7 @@ def run(args):
     print(f"Output: {plot_file}")
     print(f"Direction: {args.direction}")
     print(f"Del color: {args.del_color}, Dup color: {args.dup_color}")
+    print(f"Scale: {args.scale}")
     
     # Check input exists
     if not input_file.exists():
@@ -121,7 +124,8 @@ def run(args):
         direction=args.direction,
         del_color=args.del_color,
         dup_color=args.dup_color,
-        gene_annotations=gene_annotations
+        gene_annotations=gene_annotations,
+        scale=args.scale
     )
     
     

@@ -38,7 +38,7 @@ class CircularPlotter:
 
     def plot(self, events, output_file, blacklist_regions=None, figsize=(16, 10),
              direction='counterclockwise', del_color='red', dup_color='blue',
-             gene_annotations=None):
+             gene_annotations=None, scale='dynamic'):
         """
         Create circular plot of mitochondrial events
         
@@ -51,12 +51,17 @@ class CircularPlotter:
             del_color: Color scheme for deletions - 'red' or 'blue' (default: 'blue')
             dup_color: Color scheme for duplications - 'red' or 'blue' (default: 'red')
             gene_annotations: List of gene annotation dicts from BED file (optional)
+            scale: Heteroplasmy color scale - 'dynamic' (min-max per category) or 'fixed' (0-100%) (default: 'dynamic')
 
         """
         
         if len(events) == 0:
             print("No events to plot")
             return
+        
+        # Validate scale parameter
+        if scale not in ['dynamic', 'fixed']:
+            raise ValueError(f"Invalid scale: {scale}. Use 'dynamic' or 'fixed'")
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -291,13 +296,38 @@ class CircularPlotter:
         # Combine for processing
         dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if len(dat_dup) > 0 else dat_del
         
-        # Calculate color scales
+        # Calculate color scales based on scale parameter
         del_events = dat_processed[dat_processed['final.event'] == 'del']
         dup_events = dat_processed[dat_processed['final.event'] == 'dup']
-        del_max = del_events['value'].max() if len(del_events) > 0 else 0
-        del_min = del_events['value'].min() if len(del_events) > 0 else 0
-        dup_max = dup_events['value'].max() if len(dup_events) > 0 else 0  
-        dup_min = dup_events['value'].min() if len(dup_events) > 0 else 0
+        
+        if scale == 'fixed':
+            # Fixed scale: 0-100% for all categories
+            del_min = 0.0
+            del_max = 100.0
+            dup_min = 0.0
+            dup_max = 100.0
+            bl_min = 0.0
+            bl_max = 100.0
+            print(f"Using fixed heteroplasmy scale: 0-100%")
+        else:  # dynamic
+            # Dynamic scale: min-max within each category
+            del_max = del_events['value'].max() if len(del_events) > 0 else 0
+            del_min = del_events['value'].min() if len(del_events) > 0 else 0
+            dup_max = dup_events['value'].max() if len(dup_events) > 0 else 0  
+            dup_min = dup_events['value'].min() if len(dup_events) > 0 else 0
+            # Calculate BL min/max for gradient coloring (needed for event plotting)
+            if blacklist_regions:
+                bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
+                if len(bl_events_temp) > 0:
+                    bl_min = bl_events_temp['value'].min()
+                    bl_max = bl_events_temp['value'].max()
+                else:
+                    bl_min = 0.0
+                    bl_max = 100.0
+            else:
+                bl_min = 0.0
+                bl_max = 100.0
+            print(f"Using dynamic heteroplasmy scale - Del: {del_min:.1f}-{del_max:.1f}%, Dup: {dup_min:.1f}-{dup_max:.1f}%")
         
         # Create figure
         fig = plt.figure(figsize=figsize)
@@ -462,9 +492,10 @@ class CircularPlotter:
             het_val = event['value']
             
             if blacklist_regions and event['blacklist_crossing']:
-                color = (0.2, 0.8, 0.2)
-                alpha = 0.9
-                print(f"DEBUG: Plotting blacklist event at {event['start']}-{event['end']}")
+                # Use gradient coloring for BL events based on heteroplasmy
+                color = get_lime_green_color(het_val, bl_min, bl_max)
+                alpha = get_continuous_alpha(het_val, bl_min, bl_max)
+                print(f"DEBUG: Plotting blacklist event at {event['start']}-{event['end']}, het={het_val:.1f}%")
             else:
                 if event['final.event'] == 'del':
                     # Use the color function based on del_color parameter
@@ -524,14 +555,16 @@ class CircularPlotter:
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
             # Box for 2 lines
             box_height = 0.065
-            box = FancyBboxPatch((0.055, 0.80), 0.17, box_height,
+            box_y = 0.80
+            text_y = 0.85
+            box = FancyBboxPatch((0.055, box_y), 0.17, box_height,
                                 boxstyle="round,pad=0.008", 
                                 facecolor='white', edgecolor='gray',
                                 alpha=0.9, transform=fig.transFigure)
             fig.patches.append(box)
             
             # First line: Del and Dup counts
-            fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
+            fig.text(0.06, text_y, f"Del: {del_count}  Dup: {dup_count}", 
                     fontsize=13, weight='bold', verticalalignment='top')
             
             # Second line - all in lime-green
@@ -542,14 +575,17 @@ class CircularPlotter:
             fig.text(x_start, y_bl, f"BL Del: {bl_del_count}  BL Dup: {bl_dup_count}", 
                     fontsize=13, weight='bold', color=(0.2, 0.8, 0.2), verticalalignment='top')
         else:
-            # Single line box
-            box = FancyBboxPatch((0.055, 0.835), 0.14, 0.035,
+            # Single line box - adjusted to align properly
+            box_height = 0.035
+            box_y = 0.83
+            text_y = 0.855
+            box = FancyBboxPatch((0.055, box_y), 0.14, box_height,
                                 boxstyle="round,pad=0.008", 
                                 facecolor='white', edgecolor='gray',
                                 alpha=0.9, transform=fig.transFigure)
             fig.patches.append(box)
             
-            fig.text(0.06, 0.85, f"Del: {del_count}  Dup: {dup_count}", 
+            fig.text(0.06, text_y, f"Del: {del_count}  Dup: {dup_count}", 
                     fontsize=13, weight='bold', verticalalignment='top')
         
         
@@ -597,17 +633,13 @@ class CircularPlotter:
         legend_y = 0.48
         legend_height = 0.30
         
-        # Calculate BL events if applicable
+        # Calculate BL events for legend display (bl_min and bl_max already calculated above)
         bl_events = pd.DataFrame()
-        bl_min = 0
-        bl_max = 0
         show_bl_bar = False
         
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
             bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
             if len(bl_events) > 0:
-                bl_min = bl_events['value'].min()
-                bl_max = bl_events['value'].max()
                 show_bl_bar = True
         
         # Determine number of bars and calculate widths with more spacing
@@ -709,7 +741,7 @@ class CircularPlotter:
 
 def plot_circular(events, output_file, genome_length, blacklist_regions=None, 
                   figsize=(16, 10), direction='counterclockwise', 
-                  del_color='red', dup_color='blue', gene_annotations=None):
+                  del_color='red', dup_color='blue', gene_annotations=None, scale='dynamic'):
     """
     Convenience function to create circular plot
     
@@ -723,6 +755,7 @@ def plot_circular(events, output_file, genome_length, blacklist_regions=None,
         del_color: Color for deletions - 'red' or 'blue' (default: 'red')
         dup_color: Color for duplications - 'red' or 'blue' (default: 'blue')
         gene_annotations: List of gene annotation dicts (optional)
+        scale: Heteroplasmy color scale - 'dynamic' (min-max per category) or 'fixed' (0-100%) (default: 'dynamic')
     """
     plotter = CircularPlotter(genome_length)
-    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color, gene_annotations)
+    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color, gene_annotations, scale)
