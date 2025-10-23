@@ -94,12 +94,12 @@ class CircularPlotter:
         # Create data structure for plotting
         dat = pd.DataFrame({
             'chr': 'MT',
-            'start': events['del.start.median'],
-            'end': events['del.end.median'],
+            'start': events['del_start_median'],
+            'end': events['del_end_median'],
             'value': events['perc'],
             'dloop': events['dloop'],
             'delsize': events['delsize'],
-            'final.event': events['final.event'],
+            'final_event': events['final_event'],
             'group': events.get('group', 'G1')
         })
         
@@ -117,16 +117,16 @@ class CircularPlotter:
                 dat.loc[idx, 'blacklist_crossing'] = crosses_blacklist(row['start'], row['end'], blacklist_regions)
 
         # Count events
-        del_count = (dat['final.event'] == 'del').sum()
-        dup_count = (dat['final.event'] == 'dup').sum()
-        bl_del_count = ((dat['final.event'] == 'del') & dat['blacklist_crossing']).sum()
-        bl_dup_count = ((dat['final.event'] == 'dup') & dat['blacklist_crossing']).sum()
+        del_count = (dat['final_event'] == 'del').sum()
+        dup_count = (dat['final_event'] == 'dup').sum()
+        bl_del_count = ((dat['final_event'] == 'del') & dat['blacklist_crossing']).sum()
+        bl_dup_count = ((dat['final_event'] == 'dup') & dat['blacklist_crossing']).sum()
         
         # Add degrees
         dat['deg1'] = 358 * dat['start'] / self.genome_length
         dat['deg2'] = 358 * dat['end'] / self.genome_length
         
-        dup_no_dloop_mask = (dat['final.event'] == 'dup') & (dat['dloop'] == 'no')
+        dup_no_dloop_mask = (dat['final_event'] == 'dup') & (dat['dloop'] == 'no')
         if dup_no_dloop_mask.any():
             dat.loc[dup_no_dloop_mask, 'deg1'] = 360 + dat.loc[dup_no_dloop_mask, 'deg1']
         
@@ -286,8 +286,8 @@ class CircularPlotter:
 
         # MAIN PROCESSING
         # Separate data by type
-        dat_del = dat[dat['final.event'] == 'del'].copy()
-        dat_dup = dat[dat['final.event'] == 'dup'].copy()
+        dat_del = dat[dat['final_event'] == 'del'].copy()
+        dat_dup = dat[dat['final_event'] == 'dup'].copy()
 
         # Process duplication delsize
         if len(dat_dup) > 0:
@@ -300,8 +300,8 @@ class CircularPlotter:
         dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if len(dat_dup) > 0 else dat_del
         
         # Calculate color scales based on scale parameter
-        del_events = dat_processed[dat_processed['final.event'] == 'del']
-        dup_events = dat_processed[dat_processed['final.event'] == 'dup']
+        del_events = dat_processed[dat_processed['final_event'] == 'del']
+        dup_events = dat_processed[dat_processed['final_event'] == 'dup']
         
         if scale == 'fixed':
             # Fixed scale: 0-100% for all categories
@@ -500,7 +500,7 @@ class CircularPlotter:
                 alpha = get_continuous_alpha(het_val, bl_min, bl_max)
                 logger.debug(f"Plotting blacklist event at {event['start']}-{event['end']}, het={het_val:.1f}%")
             else:
-                if event['final.event'] == 'del':
+                if event['final_event'] == 'del':
                     # Use the color function based on del_color parameter
                     del_color_func = get_pure_red_color if del_color == 'red' else get_pure_blue_color
                     color = del_color_func(het_val, del_min, del_max)
@@ -527,7 +527,7 @@ class CircularPlotter:
                         'deg': event['deg1'],  # Now using leftmost position
                         'radius': event['radius'],
                         'het_val': het_val,
-                        'event_type': event['final.event']
+                        'event_type': event['final_event']
                     }
             
             for group_id, info in group_representatives.items():

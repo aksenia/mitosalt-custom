@@ -80,7 +80,7 @@ class EventCaller:
         # Load cluster data
         logger.info(f"Loading cluster file: {cluster_file}")
         clusters = pd.read_csv(cluster_file, sep='\t', header=None)
-        clusters.columns = ['cluster', 'read', 'del.start', 'del.end', 'lfstart', 'lfend', 'nread', 'tread', 'perc']
+        clusters.columns = ['cluster', 'read', 'del_start', 'del_end', 'lfstart', 'lfend', 'nread', 'tread', 'perc']
         clusters = clusters[~clusters['cluster'].isna()]
         
         # Extract sample name
@@ -99,16 +99,16 @@ class EventCaller:
         def calculate_max(x):
             return max([int(i) for i in str(x).split(',')])
         
-        clusters['del.start.median'] = clusters['del.start'].apply(calculate_median)
-        clusters['del.end.median'] = clusters['del.end'].apply(calculate_median)
-        clusters['del.start.min'] = clusters['del.start'].apply(calculate_min)
-        clusters['del.start.max'] = clusters['del.start'].apply(calculate_max)
-        clusters['del.end.min'] = clusters['del.end'].apply(calculate_min)
-        clusters['del.end.max'] = clusters['del.end'].apply(calculate_max)
+        clusters['del_start_median'] = clusters['del_start'].apply(calculate_median)
+        clusters['del_end_median'] = clusters['del_end'].apply(calculate_median)
+        clusters['del_start_min'] = clusters['del_start'].apply(calculate_min)
+        clusters['del_start_max'] = clusters['del_start'].apply(calculate_max)
+        clusters['del_end_min'] = clusters['del_end'].apply(calculate_min)
+        clusters['del_end_max'] = clusters['del_end'].apply(calculate_max)
         
         # Create range strings (with spaces around dash)
-        clusters['del.start.range'] = clusters['del.start.min'].astype(str) + ' - ' + clusters['del.start.max'].astype(str)
-        clusters['del.end.range'] = clusters['del.end.min'].astype(str) + ' - ' + clusters['del.end.max'].astype(str)
+        clusters['del_start_range'] = clusters['del_start_min'].astype(str) + ' - ' + clusters['del_start_max'].astype(str)
+        clusters['del_end_range'] = clusters['del_end_min'].astype(str) + ' - ' + clusters['del_end_max'].astype(str)
         
         # Create list.reads exactly like R script
         list_reads = []
@@ -142,7 +142,7 @@ class EventCaller:
         
         # Take columns 2,4,5,10 (R uses 1-based indexing, so Python is 1,3,4,9)
         bp = bp_raw.iloc[:, [1, 3, 4, 9]].copy()
-        bp.columns = ['read', 'del.start', 'del.end', 'dloop']
+        bp.columns = ['read', 'del_start', 'del_end', 'dloop']
         bp = bp[~bp['read'].isna()]
         
         logger.info(f"Loaded {len(bp)} breakpoint records")
@@ -168,14 +168,14 @@ class EventCaller:
             return pd.DataFrame()
         
         # Calculate delsize 
-        final_clusters['delsize'] = final_clusters['del.end.median'] - final_clusters['del.start.median']
+        final_clusters['delsize'] = final_clusters['del_end_median'] - final_clusters['del_start_median']
         
         # Handle dloop wraparound
         dloop_mask = final_clusters['dloop'] == 'yes'
         if dloop_mask.any():
             final_clusters.loc[dloop_mask, 'delsize'] = (
-                self.genome_length - final_clusters.loc[dloop_mask, 'del.end.median'] + 
-                final_clusters.loc[dloop_mask, 'del.start.median']
+                self.genome_length - final_clusters.loc[dloop_mask, 'del_end_median'] + 
+                final_clusters.loc[dloop_mask, 'del_start_median']
             )
         
         logger.debug(f"Calculated delsize for {len(final_clusters)} events")
@@ -207,32 +207,32 @@ class EventCaller:
         logger.debug(f"OriH: {self.ori_h}, OriL: {self.ori_l}")
         
         # Classification: Start with all as deletions
-        clusters['final.event'] = 'del'
+        clusters['final_event'] = 'del'
         
         # First loop: OriH classification (no coordinate swapping)
         for i in clusters.index:
             Rs = self.ori_h[0]  # ohs
             Re = self.ori_h[1]  # ohe
-            Ds = clusters.loc[i, 'del.start.median']
-            De = clusters.loc[i, 'del.end.median']
+            Ds = clusters.loc[i, 'del_start_median']
+            De = clusters.loc[i, 'del_end_median']
             
             # R script OriH logic (no swapping of coordinates)
             if Re >= Rs:
                 # Essential region NOT covering pos 0
                 if ((Ds >= Rs) and (Ds <= Re)) or ((De >= Rs) and (De <= Re)):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De > Ds) and (Ds <= Rs) and (De >= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De < Ds) and ((De >= Re) or (Ds <= Rs)):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
             else:
                 # Essential region IS covering pos 0
                 if (Ds >= Rs) or (Ds <= Re) or (De >= Rs) or (De <= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De < Ds):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
         
-        after_orih = (clusters['final.event'] == 'dup').sum()
+        after_orih = (clusters['final_event'] == 'dup').sum()
         logger.debug(f"After OriH: {after_orih} events classified as dup")
         
         # Second loop: OriL classification (coordinate swapping for dloop=='yes')
@@ -243,31 +243,31 @@ class EventCaller:
             
             # Coordinate assignment
             if dloop == 'yes':
-                Ds = clusters.loc[i, 'del.end.median']    # Swapped
-                De = clusters.loc[i, 'del.start.median']  # Swapped
+                Ds = clusters.loc[i, 'del_end_median']    # Swapped
+                De = clusters.loc[i, 'del_start_median']  # Swapped
             else:
-                Ds = clusters.loc[i, 'del.start.median']
-                De = clusters.loc[i, 'del.end.median']
+                Ds = clusters.loc[i, 'del_start_median']
+                De = clusters.loc[i, 'del_end_median']
             
             # Same overlap logic as OriH
             if Re >= Rs:
                 # Essential region NOT covering pos 0
                 if ((Ds >= Rs) and (Ds <= Re)) or ((De >= Rs) and (De <= Re)):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De > Ds) and (Ds <= Rs) and (De >= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De < Ds) and ((De >= Re) or (Ds <= Rs)):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
             else:
                 # Essential region IS covering pos 0
                 if (Ds >= Rs) or (Ds <= Re) or (De >= Rs) or (De <= Re):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
                 elif (De < Ds):
-                    clusters.loc[i, 'final.event'] = 'dup'
+                    clusters.loc[i, 'final_event'] = 'dup'
         
         # Final counts
-        del_count = (clusters['final.event'] == 'del').sum()
-        dup_count = (clusters['final.event'] == 'dup').sum()
+        del_count = (clusters['final_event'] == 'del').sum()
+        dup_count = (clusters['final_event'] == 'dup').sum()
         logger.info(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
         
         return clusters
@@ -285,8 +285,8 @@ class EventCaller:
             genome_seq = str(genome_record.seq).upper()
                         
             flanking_results = self._align_breakpoints(
-                events['final.start'] - 1,
-                events['final.end'],
+                events['final_start'] - 1,
+                events['final_end'],
                 genome_seq,
                 self.flank_size
             )

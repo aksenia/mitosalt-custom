@@ -65,8 +65,8 @@ class SpatialGroupAnalyzer:
 
 
         # Separate by event type first to avoid mixed groups
-        del_events = events_df[events_df['final.event'] == 'del'].copy()
-        dup_events = events_df[events_df['final.event'] == 'dup'].copy()
+        del_events = events_df[events_df['final_event'] == 'del'].copy()
+        dup_events = events_df[events_df['final_event'] == 'dup'].copy()
 
         logger.debug(f"{len(del_events)} deletions, {len(dup_events)} duplications")
         
@@ -110,11 +110,11 @@ class SpatialGroupAnalyzer:
         """Convert event row to dictionary format for grouping"""
         return {
             'idx': idx,
-            'start': event_row['del.start.median'],
-            'end': event_row['del.end.median'],
-            'center': (event_row['del.start.median'] + event_row['del.end.median']) / 2,
+            'start': event_row['del_start_median'],
+            'end': event_row['del_end_median'],
+            'center': (event_row['del_start_median'] + event_row['del_end_median']) / 2,
             'heteroplasmy': event_row['perc'],
-            'event_type': event_row['final.event'],
+            'event_type': event_row['final_event'],
             'size': event_row['delsize']
         }
 

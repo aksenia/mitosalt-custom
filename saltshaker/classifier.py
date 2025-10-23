@@ -46,7 +46,7 @@ class EventClassifier:
         if blacklist_regions:
             # Mark which events cross blacklist (important for VCF BLCROSS flag)
             events['blacklist_crossing'] = events.apply(
-                lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
+                lambda row: crosses_blacklist(row['del_start_median'], row['del_end_median'], blacklist_regions),
                 axis=1
             )
             
@@ -92,8 +92,8 @@ class EventClassifier:
         # Counts for classification
         significant_count = len(significant_events)
         high_het_count = len(high_het_events)
-        del_count = (significant_events['final.event'] == 'del').sum()
-        dup_count = (significant_events['final.event'] == 'dup').sum()
+        del_count = (significant_events['final_event'] == 'del').sum()
+        dup_count = (significant_events['final_event'] == 'dup').sum()
         
         # ============================================================
         # CLASSIFICATION LOGIC

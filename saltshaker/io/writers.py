@@ -51,21 +51,21 @@ class TSVWriter:
         for i in res.index:
             if res.loc[i, 'dloop'] == 'yes':
                 # Swap coordinates for display
-                del_start_median = res.loc[i, 'del.start.median']
-                del_end_median = res.loc[i, 'del.end.median']
-                del_start_range = res.loc[i, 'del.start.range']
-                del_end_range = res.loc[i, 'del.end.range']
-                del_start = res.loc[i, 'del.start']
-                del_end = res.loc[i, 'del.end']
+                del_start_median = res.loc[i, 'del_start_median']
+                del_end_median = res.loc[i, 'del_end_median']
+                del_start_range = res.loc[i, 'del_start_range']
+                del_end_range = res.loc[i, 'del_end_range']
+                del_start = res.loc[i, 'del_start']
+                del_end = res.loc[i, 'del_end']
                 lfstart = res.loc[i, 'lfstart']
                 lfend = res.loc[i, 'lfend']
                 
-                res.loc[i, 'del.start.median'] = del_end_median
-                res.loc[i, 'del.end.median'] = del_start_median
-                res.loc[i, 'del.start.range'] = del_end_range
-                res.loc[i, 'del.end.range'] = del_start_range
-                res.loc[i, 'del.start'] = del_end
-                res.loc[i, 'del.end'] = del_start
+                res.loc[i, 'del_start_median'] = del_end_median
+                res.loc[i, 'del_end_median'] = del_start_median
+                res.loc[i, 'del_start_range'] = del_end_range
+                res.loc[i, 'del_end_range'] = del_start_range
+                res.loc[i, 'del_start'] = del_end
+                res.loc[i, 'del_end'] = del_start
                 res.loc[i, 'lfstart'] = lfend
                 res.loc[i, 'lfend'] = lfstart
         
@@ -73,55 +73,55 @@ class TSVWriter:
         res['perc'] = res['perc'].round(4)
         
         # Calculate final coordinates exactly like R script
-        res['del.start.median'] = res['del.start.median'] + 1
-        res['final.event.size'] = np.where(
-            res['final.event'] == 'del',
+        res['del_start_median'] = res['del_start_median'] + 1
+        res['final_event_size'] = np.where(
+            res['final_event'] == 'del',
             res['delsize'],
             self.genome_length - res['delsize']
         )
-        res['final.end'] = np.where(
-            res['final.event'] == 'del',
-            res['del.end.median'],
-            res['del.start.median'] - 1
+        res['final_end'] = np.where(
+            res['final_event'] == 'del',
+            res['del_end_median'],
+            res['del_start_median'] - 1
         )
-        res['final.start'] = np.where(
-            res['final.event'] == 'del',
-            res['del.start.median'],
-            res['del.end.median'] + 1
+        res['final_start'] = np.where(
+            res['final_event'] == 'del',
+            res['del_start_median'],
+            res['del_end_median'] + 1
         )
         
         # Handle wraparound
-        res['del.start.median'] = np.where(
-            res['del.start.median'] == self.genome_length + 1,
+        res['del_start_median'] = np.where(
+            res['del_start_median'] == self.genome_length + 1,
             1,
-            res['del.start.median']
+            res['del_start_median']
         )
-        res['final.start'] = np.where(
-            res['final.start'] == self.genome_length + 1,
+        res['final_start'] = np.where(
+            res['final_start'] == self.genome_length + 1,
             1,
-            res['final.start']
+            res['final_start']
         )
 
         # Blacklist crossing flag using final coordinates
         res['blacklist_crossing'] = [
-            'yes' if crosses_blacklist(row['final.start'], row['final.end'], blacklist_regions) else 'no'
+            'yes' if crosses_blacklist(row['final_start'], row['final_end'], blacklist_regions) else 'no'
             for _, row in res.iterrows()
         ]
         
         # Create final output - NO GROUP COLUMN (added by classify)
         res_final = pd.DataFrame({
             'sample': res['sample'],
-            'cluster.id': res['cluster'],
-            'alt.reads': res['nread'].astype(int),
-            'ref.reads': res['tread'].astype(int),
+            'cluster_id': res['cluster'],
+            'alt_reads': res['nread'].astype(int),
+            'ref_reads': res['tread'].astype(int),
             'heteroplasmy': res['perc'],
-            'del.start.range': res['del.start.range'],
-            'del.end.range': res['del.end.range'],
-            'del.size': res['delsize'].astype(int),
-            'final.event': res['final.event'],
-            'final.start': res['final.start'].astype(int),
-            'final.end': res['final.end'].astype(int),
-            'final.size': res['final.event.size'].astype(int),
+            'del_start_range': res['del_start_range'],
+            'del_end_range': res['del_end_range'],
+            'del_size': res['delsize'].astype(int),
+            'final_event': res['final_event'],
+            'final_start': res['final_start'].astype(int),
+            'final_end': res['final_end'].astype(int),
+            'final_size': res['final_event_size'].astype(int),
             'blacklist_crossing': res['blacklist_crossing'],
             'seq1': res['seq1'],
             'seq2': res['seq2'],
@@ -218,8 +218,8 @@ class SummaryWriter:
                 events_with_groups = pd.DataFrame()
         
         # Count events by type
-        del_count = (events['final.event'] == 'del').sum() if len(events) > 0 else 0
-        dup_count = (events['final.event'] == 'dup').sum() if len(events) > 0 else 0
+        del_count = (events['final_event'] == 'del').sum() if len(events) > 0 else 0
+        dup_count = (events['final_event'] == 'dup').sum() if len(events) > 0 else 0
         dloop_count = (events['dloop'] == 'yes').sum() if len(events) > 0 else 0
         
         # Calculate comprehensive statistics

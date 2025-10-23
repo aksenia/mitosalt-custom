@@ -91,12 +91,12 @@ class VCFWriter:
         """Convert single event to VCF line"""
         # Basic fields
         chrom = self.reference_name
-        pos = int(event['del.start.median'])
+        pos = int(event['del_start_median'])
         id_field = "."
         ref = "N"  # Symbolic
         
         # ALT based on event type
-        svtype = "DEL" if event['final.event'] == 'del' else "DUP"
+        svtype = "DEL" if event['final_event'] == 'del' else "DUP"
         alt = f"<{svtype}>"
         
         qual = "."
@@ -105,7 +105,7 @@ class VCFWriter:
         # INFO field
         info_parts = [
             f"SVTYPE={svtype}",
-            f"END={int(event['del.end.median'])}",
+            f"END={int(event['del_end_median'])}",
             f"SVLEN={int(event['delsize'])}",
             f"HF={event['perc']/100:.4f}",
             f"GROUP={event['group']}",

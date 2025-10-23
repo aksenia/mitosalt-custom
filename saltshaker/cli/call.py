@@ -113,21 +113,21 @@ def run(args):
     
     # Calculate final coordinates
     events['perc'] = events['perc'].round(4)
-    events['del.start.median'] = events['del.start.median'] + 1
-    events['final.event.size'] = np.where(
-        events['final.event'] == 'del',
+    events['del_start_median'] = events['del_start_median'] + 1
+    events['final_event_size'] = np.where(
+        events['final_event'] == 'del',
         events['delsize'],
         args.genome_length - events['delsize']
     )
-    events['final.end'] = np.where(
-        events['final.event'] == 'del',
-        events['del.end.median'],
-        events['del.start.median'] - 1
+    events['final_end'] = np.where(
+        events['final_event'] == 'del',
+        events['del_end_median'],
+        events['del_start_median'] - 1
     )
-    events['final.start'] = np.where(
-        events['final.event'] == 'del',
-        events['del.start.median'],
-        events['del.end.median'] + 1
+    events['final_start'] = np.where(
+        events['final_event'] == 'del',
+        events['del_start_median'],
+        events['del_end_median'] + 1
     )
     
     # Add flanking sequences
