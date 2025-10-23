@@ -58,7 +58,7 @@ def run(args):
     input_file = input_dir / f"{args.prefix}.saltshaker_call_metadata.tsv"
     summary_file = output_dir / f"{args.prefix}.saltshaker_classify.txt"
     classified_file = output_dir / f"{args.prefix}.saltshaker_classify_metadata.tsv"
-    vcf_file = output_dir / f"{args.prefix}.vcf"
+    vcf_file = output_dir / f"{args.prefix}.saltshaker.vcf"
     
     print(f"Sample prefix: {args.prefix}")
     print(f"Input: {input_file}")

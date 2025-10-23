@@ -112,7 +112,8 @@ class VCFWriter:
         # Add flags
         if event.get('dloop') == 'yes':
             info_parts.append("DLOOP")
-        if event.get('blacklist_crossing') == 'yes':
+        bl_cross = event.get('blacklist_crossing', False)
+        if bl_cross is True or bl_cross == 'yes' or str(bl_cross).lower() == 'true':
             info_parts.append("BLCROSS")
         
         info = ";".join(info_parts)

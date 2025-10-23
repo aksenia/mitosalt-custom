@@ -23,18 +23,6 @@ class EventClassifier:
         """
         Classify events as Single or Multiple pattern
         
-        Single Pattern (patient-like):
-        - Few high-heteroplasmy events (≥20%)
-        - Dominant spatial group (≥70% of events)
-        - Few total events (≤10)
-        - Consistent with pathogenic single deletion/duplication
-        
-        Multiple Pattern (mouse model-like):
-        - Many events (>10)
-        - Dispersed spatial distribution (no dominant group)
-        - No high-heteroplasmy events
-        - Consistent with mtDNA maintenance defects
-        
         Args:
             events: DataFrame with mitochondrial events
             blacklist_regions: Optional list of blacklist regions to exclude
@@ -54,12 +42,15 @@ class EventClassifier:
         MULTIPLE_THRESHOLD = cfg.MULTIPLE_EVENT_THRESHOLD
         DOMINANT_FRACTION = cfg.DOMINANT_GROUP_FRACTION
         
-        # Filter blacklist-crossing events
+        # Filter blacklist-crossing events AND mark them
         if blacklist_regions:
-            clean_events = events[~events.apply(
+            # Mark which events cross blacklist (important for VCF BLCROSS flag)
+            events['blacklist_crossing'] = events.apply(
                 lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
                 axis=1
-            )]
+            )
+            
+            clean_events = events[~events['blacklist_crossing']].copy()
             blacklist_filtered = len(events) - len(clean_events)
             
             # EDGE CASE: All events cross blacklist
@@ -78,23 +69,25 @@ class EventClassifier:
                 
                 # Assign BL groups to all events for VCF/plotting
                 events_with_groups = events.copy()
+                # blacklist_crossing already set to True above
                 for idx, (_, event) in enumerate(events_with_groups.iterrows()):
                     events_with_groups.loc[event.name, 'group'] = f'BL{idx+1}'
                 
                 return classification, reason, criteria, events_with_groups
         else:
-            clean_events = events
+            # No blacklist provided - all events are clean, mark as non-crossing
+            events['blacklist_crossing'] = False
+            clean_events = events.copy()
             blacklist_filtered = 0
         
         # Basic event metrics
-        total_events = len(clean_events) # All events for spatial grouping
+        total_events = len(clean_events)
         high_het_events = clean_events[clean_events['perc'] >= HIGH_HET]
         significant_events = clean_events[clean_events['perc'] >= NOISE]
         
-       # Get metrics from significant events only, fallback on total without blacklisted
+        # Get metrics from significant events only, fallback on total without blacklisted
         max_het = significant_events['perc'].max() if len(significant_events) > 0 else clean_events['perc'].max()
         median_het = significant_events['perc'].median() if len(significant_events) > 0 else clean_events['perc'].median()
-
         
         # Counts for classification
         significant_count = len(significant_events)
@@ -126,12 +119,9 @@ class EventClassifier:
             if len(events_with_groups) > 0:
                 events_with_groups['group'] = 'G1'
             
-            # Add blacklist events back for visualization/output
+            # Add blacklist events back for visualization/output (using pre-marked column)
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events.apply(
-                    lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
-                    axis=1
-                )].copy()
+                blacklist_events = events[events['blacklist_crossing'] == True].copy()
                 
                 for idx, (_, event) in enumerate(blacklist_events.iterrows()):
                     blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
@@ -162,12 +152,9 @@ class EventClassifier:
             events_with_groups = clean_events.copy()
             events_with_groups['group'] = 'G1'
             
-            # Add blacklist events back for visualization/output
+            # Add blacklist events back for visualization/output (using pre-marked column)
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events.apply(
-                    lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
-                    axis=1
-                )].copy()
+                blacklist_events = events[events['blacklist_crossing'] == True].copy()
                 
                 for idx, (_, event) in enumerate(blacklist_events.iterrows()):
                     blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
@@ -197,14 +184,13 @@ class EventClassifier:
             # Can we assess spatial distribution?
             can_assess_spatial = total_events >= MIN_CLUSTER_SIZE
             
-            # Pattern indicators  - based on SIGNIFICANT events (biological relevance)
+            # Pattern indicators - based on SIGNIFICANT events
             has_high_het = len(high_het_events) > 0
-            few_events = significant_count <= MULTIPLE_THRESHOLD  # Changed from total_events
-            many_events = significant_count > MULTIPLE_THRESHOLD  # Changed from total_events
-
+            few_events = significant_count <= MULTIPLE_THRESHOLD
+            many_events = significant_count > MULTIPLE_THRESHOLD
             no_high_het = len(high_het_events) == 0
             
-            # Spatial metrics (only meaningful if enough events)
+            # Spatial metrics
             if can_assess_spatial:
                 dominant_group_pattern = dominant_fraction >= DOMINANT_FRACTION
                 dispersed = dominant_fraction < DOMINANT_FRACTION
@@ -298,12 +284,9 @@ class EventClassifier:
                 else:
                     criteria['subtype'] = "Multiple single-type events"
             
-            # Add blacklist events back for visualization
+            # Add blacklist events back for visualization (using pre-marked column)
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events.apply(
-                    lambda row: crosses_blacklist(row['del.start.median'], row['del.end.median'], blacklist_regions),
-                    axis=1
-                )].copy()
+                blacklist_events = events[events['blacklist_crossing'] == True].copy()
                 
                 for idx, (_, event) in enumerate(blacklist_events.iterrows()):
                     blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
