@@ -11,8 +11,8 @@ A Python package for classifying and visualizing mitochondrial structural varian
 SAltShaker is a Python port and extension of the original MitoSAlt `delplot.R` visualization script. The package provides three modular commands for a flexible analysis workflow:
 
 - **Event calling**: Direct Python port of the original R script's deletion/duplication classification logic
-- **Pattern classification**: Rule-based decision tree to distinguish single from mouse multiple type of events
-- **Visualization**: Circular genome plotting based on the original R script visualization with spatial grouping enhancements
+- **Pattern classification**: Rule-based decision tree to distinguish single and multiple type of events from background
+- **Visualization**: Circular genome plotting based on the original R script visualization with spatial grouping and annotations
 
 The core deletion/duplication classification algorithm (`saltshaker call`) faithfully replicates the original R implementation. The additional pattern classification (`saltshaker classify`) extends this with literature-based criteria to distinguish between pathogenic single high-heteroplasmy events and mtDNA maintenance defect patterns following [Basu et al. PLoS Genetics 2020](https://journals.plos.org/plosgenetics/article?id=10.1371/journal.pgen.1009242).
 
@@ -29,7 +29,7 @@ pip install -e .
 
 ### 1. `saltshaker call` - Event calling (R script port)
 
-**Python port of the original MitoSAlt R script event classification logic.** Classifies detected breakpoint clusters as deletions or duplications based on replication origin overlap, following the exact algorithm from `delplot.R`.
+**Python port of the original MitoSAlt R script event calling logic.** Calls detected breakpoint clusters as deletions or duplications based on replication origin overlap, following the exact algorithm from `delplot.R`.
 
 **Usage:**
 
@@ -47,7 +47,6 @@ saltshaker call \
     -f 15 \                                 # flanking sequence size (bp)
     --blacklist                             # Optional: enable with default MT blacklist, OR
     --blacklist custom_bl.bed               # Optional: enable with custom BED file
-Out
 ```
 
 **Outputs:**
@@ -62,7 +61,7 @@ The  logic is a direct port of the original MitoSAlt R implementation:
 
 1. **Data loading**: Parses cluster and breakpoint files, merges data to link clusters with D-loop crossing information
 2. **Deletion size calculation**: Handles circular genome wraparound for events crossing position 1
-3. **Origin-based classification**: Events overlapping replication origins (OriH or OriL) are classified as duplications; non-overlapping events are deletions
+3. **Origin-based event calling**: Events overlapping replication origins (OriH or OriL) are called as duplications; non-overlapping events are deletions
 4. **Coordinate handling**: Implements the R script's coordinate swapping logic for D-loop crossing events
 5. **Flanking sequence analysis**: Uses Biostrings-equivalent pattern matching to find microhomology sequences near breakpoints
 
@@ -70,7 +69,7 @@ This approach identifies the arc complementary to the actual structural change, 
 
 **Original R script functionality preserved:**
 
-- Exact deletion/duplication classification algorithm
+- Exact deletion/duplication calling algorithm
 - D-loop crossing detection and coordinate handling
 - Flanking sequence extraction and microhomology analysis
 - Output TSV format and column names
@@ -78,11 +77,11 @@ This approach identifies the arc complementary to the actual structural change, 
 
 **Python enhancements in call step:**
 
-- Blacklist region detection and flagging
+- Blacklist region detection and flagging if `--blacklist` flag is supplied.
 
 ### 2. `saltshaker classify` - Pattern classification
 
-**Extended analysis beyond the original R script.** Performs spatial grouping and classifies the overall pattern as Single or Multiple based on heteroplasmy distribution and event clustering.
+**Extended analysis beyond the original R script.** Performs spatial grouping and classifies the overall pattern as Single, Multiple or background based on heteroplasmy levels and spatial event distribution.
 
 **Usage:**
 
@@ -93,43 +92,42 @@ saltshaker classify \
     --output-dir results/ \         # Output directory (default: same as input-dir)
     --blacklist                     # Optional: enable with default MT blacklist, OR
     --blacklist custom_bl.bed       # Optional: enable with custom BED file
-   --vcf \                         # Optional: also output VCF format
-    --high-het 20 \                 # Optional: high heteroplasmy threshold % (default: 20)
-    --noise 1.0 \                   # Optional: noise threshold % (default: 1.0)
+    --vcf \                         # Optional: also output VCF format
+    --high-het 10 \                 # Optional: high heteroplasmy threshold % (default: 20)
+    --noise 0.3 \                   # Optional: noise threshold % (default: 1.0)
     --radius 600 \                  # Optional: spatial clustering radius bp (default: 600)
-    --multiple-threshold 10 \       # Optional: event count for Multiple pattern (default: 10)
-    --dominant-fraction 0.70        # Optional: fraction for dominant group (default: 0.70)
+    --multiple-threshold 5 \       # Optional: event count for Multiple pattern (default: 10)
+    --dominant-fraction 0.5        # Optional: fraction for dominant group (default: 0.70)
 ```
 
 **Outputs:**
 
 - `results/sample.saltshaker_classify.txt` - Detailed analysis report with classification reasoning
 - `results/sample.saltshaker_classify_metadata.tsv` - Events with spatial group assignments (for plotting)
-- `results/sample.vcf` - VCF format with groups and heteroplasmy (if `--vcf` specified)
-
+- `results/sample.saltshaker.vcf` - events in VCF format (if `--vcf` specified)
 
 **Classification criteria:**
 
-**Single pattern** (patient-like):
+**Single pattern**:
 
-- One or few high-heteroplasmy events (≥20%)
-- Dominant spatial group (≥70% of events)
-- Few total events (≤10)
+- One or few high-heteroplasmy events (≥`high-het`)
+- Dominant spatial group (≥`dominant-fraction` of events)
+- Few total events (≤`multiple-threshold`)
 - Consistent with pathogenic single deletion/duplication
 
-**Multiple pattern** (mouse model-like):
+**Multiple pattern**:
 
-- Many events (>10)
+- Many events (>`multiple-threshold`)
 - Dispersed spatial distribution (no dominant group)
 - No high-heteroplasmy events
 - Consistent with mtDNA maintenance defects
 
 **Spatial grouping:**
-Events within 600bp (configurable) are grouped together. All classification thresholds can be customized via CLI (see `saltshaker classify --help`).
+Events within `radius` bp are grouped together.
 
 ### 3. `saltshaker plot` - Visualization
 
-Generates circular genome plots based on the original R script visualization with enhanced spatial grouping. 
+Generates circular genome plots based on the original R script visualization with enhanced spatial grouping and other features.
 
 **Usage:**
 
@@ -137,14 +135,14 @@ Generates circular genome plots based on the original R script visualization wit
 saltshaker plot \
     --prefix sample1 \
     --input-dir results/ \
-    --output-dir results/plots/ \  # Optional: default is input-dir
+    --output-dir results/plots/ \   # Optional: default is input-dir
     --genes \                       # Optional: enable with default MT genes, OR
     --genes custom_genes.bed \      # Optional: enable with custom BED file
     --blacklist \                   # Optional: enable with default MT blacklist, OR
     --blacklist custom_bl.bed \     # Optional: enable with custom BED file
     --figsize 16 10 \               # Optional: width height (default: 16 10)
     --direction clockwise \         # Optional: clockwise or counterclockwise (default: counterclockwise)
-    --del-color red \               # Optional: red or blue (default: blues)
+    --del-color red \               # Optional: red or blue (default: blue)
     --dup-color blue \              # Optional: red or blue (default: red)
     --scale fixed                   # Optional: dynamic or fixed (default: dynamic)
 
@@ -157,10 +155,10 @@ saltshaker plot \
 **Visualization features:**
 
 - Circular genome with arc-based event display
-- Heteroplasmy gradient coloring for all event types (del/dup/BL)
-- Dynamic (min-max) or fixed (0-100%) heteroplasmy scale
-- Spatial grouping for non-overlapping events
-- Optional gene annotations with track and labels
+- Heteroplasmy gradient coloring for all event types (del/dup/blacklist-crossing events - BL)
+- Dynamic (min-max %) or fixed (0-100%) heteroplasmy scale
+- Spatial grouping for overlapping events
+- Optional gene annotations track and labels
 - Optional blacklist region marking (BL-crossing events in lime-green  gradient)
 - Configurable colors and polar direction
 
@@ -240,7 +238,7 @@ Human-readable analysis report including:
 - Spatial clustering metrics
 - Classification criteria scores
 
-### VCF format (`{prefix}.vcf`)
+### VCF format (`{prefix}.saltshaker.vcf`)
 
 Standard VCF 4.3 format with structural variant fields:
 
@@ -253,7 +251,7 @@ Standard VCF 4.3 format with structural variant fields:
 - `DLOOP`: Flag for D-loop crossing
 - `BLCROSS`: Flag for blacklist crossing
 
-### Circular Plot (`{prefix}.saltshaker.png`)
+### Circular plot (`{prefix}.saltshaker.png`)
 
 ## Complete workflow example
 
@@ -316,16 +314,16 @@ Default classification thresholds are defined in `saltshaker/config.py`:
 
 ```python
 # Heteroplasmy thresholds
-HIGH_HET_THRESHOLD = 20.0        # High heteroplasmy threshold (%), --high-het
-NOISE_THRESHOLD = 1.0            # Noise threshold (%), --noise
+HIGH_HET_THRESHOLD = 10.0        # High heteroplasmy threshold (%), --high-het
+NOISE_THRESHOLD = 0.3            # Noise threshold (%), --noise
 
 # Spatial clustering
 CLUSTER_RADIUS = 600             # Spatial grouping radius (bp), --radius
 MIN_CLUSTER_SIZE = 2             # Minimum events per cluster (not configurable via CLI)
 
 # Pattern classification
-MULTIPLE_EVENT_THRESHOLD = 10    # Event count for Multiple pattern, --multiple-threshold
-DOMINANT_GROUP_FRACTION = 0.70   # Fraction for dominant group (70%), --dominant-fraction
+MULTIPLE_EVENT_THRESHOLD = 5     # Event count for Multiple pattern, --multiple-threshold
+DOMINANT_GROUP_FRACTION = 0.5    # Fraction for dominant group (70%), --dominant-fraction
 ```
 
 These can be customized by modifying the configuration file or via CLI arguments (see `saltshaker classify --help`).
@@ -337,7 +335,7 @@ These can be customized by modifying the configuration file or via CLI arguments
 All commands support:
 
 - `-h, --help`: Show help message
-- `-b, --blacklist FILE`: BED file with regions to exclude
+- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist, use as a flag; optional: custom BED file)
 
 ### `call` command
 
@@ -358,7 +356,6 @@ All commands support:
 - `--output-dir DIR`: Output directory (default: .)
 - `-H, --het-limit FLOAT`: Heteroplasmy threshold (default: 0.01)
 - `-f, --flank-size INT`: Flanking sequence size in bp (default: 15)
-- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 
 ### `classify` command
 
@@ -370,7 +367,6 @@ All commands support:
 **Optional:**
 
 - `--output-dir DIR`: Output directory (default: input-dir)
-- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 - `--vcf`: Also output VCF format
 - `--high-het FLOAT`: High heteroplasmy threshold % (default: 20)
 - `--noise FLOAT`: Noise threshold % (default: 1)
@@ -389,7 +385,6 @@ All commands support:
 
 - `--output-dir DIR`: Output directory (default: input-dir)
 - `--genes [FILE]`: Enable gene annotations (default: built-in MT genes; optional: custom BED file)
-- `--blacklist [FILE]`: Enable blacklist regions (default: built-in MT blacklist; optional: custom BED file)
 - `--figsize WIDTH HEIGHT`: Figure dimensions (default: 16 10)
 - `--direction STR`: Plot direction - 'clockwise' or 'counterclockwise' (default: counterclockwise, MitoSAlt original)
 - `--del-color STR`: Deletion color - 'red' or 'blue' (default: blue, MitoSAlt original)
@@ -410,23 +405,23 @@ biopython>=1.78
 ```bash
 saltshaker/
 ├── __init__.py
-├── __main__.py          # CLI entry point with subcommands
-├── config.py            # Configuration and thresholds
-├── event_caller.py      # Event calling (R script port)
-├── classifier.py        # Pattern classification (extended)
-├── spatial.py           # Spatial grouping (extended)
-├── visualizer.py        # Circular plotting (R script based)
-├── utils.py             # Utility functions
+├── __main__.py                  # CLI entry point with subcommands
+├── config.py                    # Configuration and thresholds
+├── event_caller.py              # Event calling (R script port)
+├── classifier.py                # Pattern classification (single vs musltiple vs background)
+├── spatial.py                   # Spatial grouping
+├── visualizer.py                # Circular plotting
+├── utils.py                     # Utility functions
 ├── cli/
-│   ├── call.py          # Call subcommand
-│   ├── classify.py      # Classify subcommand
-│   └── plot.py          # Plot subcommand
+│   ├── call.py                  # Call subcommand
+│   ├── classify.py              # Classify subcommand
+│   └── plot.py                  # Plot subcommand
 └── io/
-    ├── readers.py       # File input (blacklist BED files)
-    ├── writers.py       # TSV and summary output
-    └── vcf_writer.py    # VCF format output
+    ├── readers.py               # File input
+    ├── writers.py               # TSV and summary output
+    └── vcf_writer.py            # VCF format output
 └── data/
-    ├── __init__.py      # Default file paths
+    ├── __init__.py              # Default file paths
     ├── gencode.v49.annotation.MT_genes.bed      # Default MT gene annotations
     └── mt_blacklist_regions.bed                 # Default MT blacklist regions
 docs/
