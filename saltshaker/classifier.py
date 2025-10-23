@@ -61,8 +61,27 @@ class EventClassifier:
                 axis=1
             )]
             blacklist_filtered = len(events) - len(clean_events)
+            
+            # EDGE CASE: All events cross blacklist
             if len(clean_events) == 0:
-                return "Unknown", "All events cross blacklisted regions", {}, events.copy()
+                classification = "Blacklist-only"
+                reason = f"All {len(events)} event(s) cross blacklisted regions"
+                
+                criteria = {
+                    'total_events': 0,
+                    'total_raw_events': len(events),
+                    'blacklist_filtered': blacklist_filtered,
+                    'significant_count': 0,
+                    'max_heteroplasmy': events['perc'].max(),
+                    'subtype': "All events in blacklist regions"
+                }
+                
+                # Assign BL groups to all events for VCF/plotting
+                events_with_groups = events.copy()
+                for idx, (_, event) in enumerate(events_with_groups.iterrows()):
+                    events_with_groups.loc[event.name, 'group'] = f'BL{idx+1}'
+                
+                return classification, reason, criteria, events_with_groups
         else:
             clean_events = events
             blacklist_filtered = 0
