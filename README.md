@@ -15,7 +15,35 @@ Build Singularity image if needed
 singularity build mitosalt.sif docker-daemon://mitosalt:latest
 ```
 
-Run the full MitoSAlt pipeline, please mind that pipeline expects you to mount to `/output`
+Run the full MitoSAlt pipeline, please mind that pipeline expects you to mount to `/output`. 
+
+Docker:
+
+```bash
+# output prefix
+sample=$1
+# read files basename (assuming they are located according to mount below)
+R1=$2
+R2=$3
+
+docker run --rm \
+  -v "$(pwd)/tmp:/tmp" \
+  -v "$(pwd)/data/reads/:/data" \
+  -v "$(pwd)/genome:/output/genome" \
+  -v "$(pwd)/output/${sample}:/output" \
+  -e HOME=/tmp \
+  -e TMPDIR=/tmp \
+  -w /output \
+  mitosalt:latest \
+  bash -c "cd /output && mkdir -p bam bin bw indel log plot tab \
+    && perl /opt/MitoSAlt_1.1.1/MitoSAlt1.1.1.pl \
+      /opt/MitoSAlt_1.1.1/config_human.txt \
+      /data/${R1} \
+      /data/${R2} \
+      ${sample}"
+```
+
+Singularity:
 
 ```bash
 # temp folders to explicitely provide to singularity 

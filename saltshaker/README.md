@@ -167,11 +167,11 @@ saltshaker plot \
 ```bash
 Example sample with 5-25% heteroplasmy:
 
-Dynamic Scale:
+Dynamic scale:
 [████████████████████] ← Colors span full gradient from 5% to 25%
 5%                 25%
 
-Fixed Scale:
+Fixed scale:
 [█████░░░░░░░░░░░░░░░] ← Colors span from 0% to 100%, events appear lighter
 0%               100%
 ```
@@ -201,8 +201,13 @@ Fixed Scale:
 
 **Blacklist file** (`.bed`)
 
-- BED format regions to exclude (e.g., artifacts, repetitive sequences)
+- BED format regions to flag (e.g., artifacts, repetitive sequences)
 - Format: chromosome, start position, end position, name
+
+**Genes file** (`.bed`)
+
+- BED format gene regions to plot around the genomic axis
+- Format: chromosome, start position, end position, name, score (0), strand (+), thick start (same as start), think end (same as end), color in rgb code (e.g. `255,255,0`)
 
 ## Output formats
 
@@ -398,6 +403,8 @@ pandas>=1.3.0
 numpy>=1.20.0
 matplotlib>=3.3.0
 biopython>=1.78
+logistro>=2.0.0
+
 ```
 
 ## Package structure
