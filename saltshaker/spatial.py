@@ -1,13 +1,16 @@
 """
-Spatial Group Analyzer
+Spatial group analyzer
 
 Analyzes spatial clustering and grouping of mitochondrial events.
 Groups events by proximity on the circular genome.
 """
 
+from __future__ import annotations
+from typing import List, Dict, Any, Optional
 import pandas as pd
 import numpy as np
 import logging
+
 from .config import ClassificationConfig
 
 logger = logging.getLogger(__name__)
@@ -21,7 +24,11 @@ class SpatialGroupAnalyzer:
     calculates clustering metrics, and identifies dominant spatial patterns.
     """
     
-    def __init__(self, genome_length, config=None):
+    def __init__(
+        self,
+        genome_length: int,
+        config: Optional[ClassificationConfig] = None
+    ) -> None:
         """
         Initialize SpatialGroupAnalyzer
         
@@ -29,11 +36,17 @@ class SpatialGroupAnalyzer:
             genome_length: Mitochondrial genome length
             config: ClassificationConfig instance (uses defaults if None)
         """
-        self.genome_length = genome_length
-        self.config = config or ClassificationConfig()
+        self.genome_length: int = genome_length
+        self.config: ClassificationConfig = config or ClassificationConfig()
     
-    def group_events(self, events_df, radius=None, high_het_threshold=None, 
-                    sig_het_threshold=None, min_group_size=None):
+    def group_events(
+        self,
+        events_df: pd.DataFrame,
+        radius: Optional[int] = None,
+        high_het_threshold: Optional[float] = None, 
+        sig_het_threshold: Optional[float] = None,
+        min_group_size: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Perform spatial grouping of events within radius distance
         
@@ -63,7 +76,6 @@ class SpatialGroupAnalyzer:
 
         logger.debug(f"Spatial Grouping: {len(events_df)} events, radius={radius}bp, min_size={min_group_size}")
 
-
         # Separate by event type first to avoid mixed groups
         del_events = events_df[events_df['final_event'] == 'del'].copy()
         dup_events = events_df[events_df['final_event'] == 'dup'].copy()
@@ -71,11 +83,11 @@ class SpatialGroupAnalyzer:
         logger.debug(f"{len(del_events)} deletions, {len(dup_events)} duplications")
         
         # Group each type separately
-        del_groups = self._group_events_by_type(del_events, radius, 'del') if not del_events.empty else []
-        dup_groups = self._group_events_by_type(dup_events, radius, 'dup') if not dup_events.empty else []
+        del_groups: List[Dict[str, Any]] = self._group_events_by_type(del_events, radius, 'del') if not del_events.empty else []
+        dup_groups: List[Dict[str, Any]] = self._group_events_by_type(dup_events, radius, 'dup') if not dup_events.empty else []
         
         # Combine and assign global group IDs
-        all_groups = del_groups + dup_groups
+        all_groups: List[Dict[str, Any]] = del_groups + dup_groups
         
         # Sort by median size (largest first) for outside-to-inside plotting
         all_groups.sort(key=lambda x: x['median_size'], reverse=True)
@@ -92,39 +104,87 @@ class SpatialGroupAnalyzer:
             sig_het_threshold=sig_het_threshold
         )
     
-    def _circular_distance(self, pos1, pos2):
-        """Calculate minimum distance on circular genome"""
-        direct = abs(pos1 - pos2)
-        wraparound = self.genome_length - direct
+    def _circular_distance(self, pos1: float, pos2: float) -> float:
+        """
+        Calculate minimum distance on circular genome
+        
+        Args:
+            pos1: Position 1
+            pos2: Position 2
+            
+        Returns:
+            Minimum circular distance
+        """
+        direct: float = abs(pos1 - pos2)
+        wraparound: float = self.genome_length - direct
         return min(direct, wraparound)
 
-    def _events_are_close(self, event1, event2, radius):
-        """Check if two events are within grouping radius"""
-        start_dist = self._circular_distance(event1['start'], event2['start'])
-        end_dist = self._circular_distance(event1['end'], event2['end'])
-        center_dist = self._circular_distance(event1['center'], event2['center'])
+    def _events_are_close(
+        self,
+        event1: Dict[str, Any],
+        event2: Dict[str, Any],
+        radius: int
+    ) -> bool:
+        """
+        Check if two events are within grouping radius
+        
+        Args:
+            event1: First event dict
+            event2: Second event dict
+            radius: Maximum distance for grouping
+            
+        Returns:
+            True if events are close enough to group
+        """
+        start_dist: float = self._circular_distance(event1['start'], event2['start'])
+        end_dist: float = self._circular_distance(event1['end'], event2['end'])
+        center_dist: float = self._circular_distance(event1['center'], event2['center'])
         
         return min(start_dist, end_dist, center_dist) <= radius
 
-    def _event_to_dict(self, event_row, idx):
-        """Convert event row to dictionary format for grouping"""
+    def _event_to_dict(self, event_row: pd.Series, idx: int) -> Dict[str, Any]:
+        """
+        Convert event row to dictionary format for grouping
+        
+        Args:
+            event_row: DataFrame row with event data
+            idx: Index of event
+            
+        Returns:
+            Dictionary with event information
+        """
         return {
             'idx': idx,
-            'start': event_row['del_start_median'],
-            'end': event_row['del_end_median'],
-            'center': (event_row['del_start_median'] + event_row['del_end_median']) / 2,
-            'heteroplasmy': event_row['perc'],
-            'event_type': event_row['final_event'],
-            'size': event_row['delsize']
+            'start': float(event_row['del_start_median']),
+            'end': float(event_row['del_end_median']),
+            'center': (float(event_row['del_start_median']) + float(event_row['del_end_median'])) / 2,
+            'heteroplasmy': float(event_row['perc']),
+            'event_type': str(event_row['final_event']),
+            'size': float(event_row['delsize'])
         }
 
-    def _group_events_by_type(self, events, radius, event_type):
-        """Group events of same type using circular distance"""
+    def _group_events_by_type(
+        self,
+        events: pd.DataFrame,
+        radius: int,
+        event_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Group events of same type using circular distance
+        
+        Args:
+            events: DataFrame with events of single type
+            radius: Grouping radius in bp
+            event_type: Type of event ('del' or 'dup')
+            
+        Returns:
+            List of group info dictionaries
+        """
         if events.empty:
             return []
         
-        groups = []
-        used_indices = set()
+        groups: List[Dict[str, Any]] = []
+        used_indices: set = set()
         
         # Sort by heteroplasmy (highest first) - KEEP ORIGINAL INDEX
         events_sorted = events.sort_values('perc', ascending=False)
@@ -136,7 +196,7 @@ class SpatialGroupAnalyzer:
             event = events_sorted.loc[idx]
             
             # Start new group
-            group = [self._event_to_dict(event, idx)]
+            group: List[Dict[str, Any]] = [self._event_to_dict(event, idx)]
             used_indices.add(idx)
             
             # Find close events (single-linkage clustering)
@@ -158,26 +218,39 @@ class SpatialGroupAnalyzer:
         
         return groups
 
-    def _build_group_info(self, group, event_type):
-        """Build group information dictionary"""
+    def _build_group_info(
+        self,
+        group: List[Dict[str, Any]],
+        event_type: str
+    ) -> Dict[str, Any]:
+        """
+        Build group information dictionary
+        
+        Args:
+            group: List of event dicts in this group
+            event_type: Type of events ('del' or 'dup')
+            
+        Returns:
+            Dictionary with group statistics and metadata
+        """
         cfg = self.config
         
-        heteroplasmy_values = [e['heteroplasmy'] for e in group]
-        sizes = [e['end'] - e['start'] for e in group]
-        positions = []
+        heteroplasmy_values: List[float] = [e['heteroplasmy'] for e in group]
+        sizes: List[float] = [e['end'] - e['start'] for e in group]
+        positions: List[float] = []
         for e in group:
             positions.extend([e['start'], e['end']])
         
-        group_info = {
+        group_info: Dict[str, Any] = {
             'id': 0,
             'group_id': 'G1',
             'event_count': len(group),
             'event_type': event_type,
             'max_heteroplasmy': max(heteroplasmy_values),
-            'mean_heteroplasmy': np.mean(heteroplasmy_values),
+            'mean_heteroplasmy': float(np.mean(heteroplasmy_values)),
             'total_heteroplasmy': sum(heteroplasmy_values),
-            'median_size': np.median(sizes),  
-            'max_size': max(sizes),          
+            'median_size': float(np.median(sizes)),
+            'max_size': max(sizes),
             'spatial_range': max(positions) - min(positions) if len(positions) > 1 else 0,
             'high_het_count': sum(1 for h in heteroplasmy_values if h >= cfg.HIGH_HET_THRESHOLD),
             'significant_count': sum(1 for h in heteroplasmy_values if h >= cfg.NOISE_THRESHOLD),
@@ -198,15 +271,35 @@ class SpatialGroupAnalyzer:
         
         return group_info
 
-    def _build_grouping_results(self, all_groups, events_df, significant_groups, 
-                            high_het_groups, high_het_threshold, sig_het_threshold):
-        """Build final grouping results with defensive index handling"""
-        dominant_group = all_groups[0] if all_groups else None
-        dominant_group_events = dominant_group['event_count'] if dominant_group else 0
-        dominant_group_range = dominant_group['spatial_range'] if dominant_group else 0
+    def _build_grouping_results(
+        self,
+        all_groups: List[Dict[str, Any]],
+        events_df: pd.DataFrame,
+        significant_groups: List[Dict[str, Any]],
+        high_het_groups: List[Dict[str, Any]],
+        high_het_threshold: float,
+        sig_het_threshold: float
+    ) -> Dict[str, Any]:
+        """
+        Build final grouping results with defensive index handling
         
-        events_in_significant_groups = sum(g['event_count'] for g in significant_groups)
-        outlier_events = len(events_df) - events_in_significant_groups
+        Args:
+            all_groups: All spatial groups
+            events_df: Original events DataFrame
+            significant_groups: Groups with significant events
+            high_het_groups: Groups with high heteroplasmy
+            high_het_threshold: High heteroplasmy threshold
+            sig_het_threshold: Significance threshold
+            
+        Returns:
+            Dictionary with complete grouping analysis
+        """
+        dominant_group: Optional[Dict[str, Any]] = all_groups[0] if all_groups else None
+        dominant_group_events: int = dominant_group['event_count'] if dominant_group else 0
+        dominant_group_range: float = dominant_group['spatial_range'] if dominant_group else 0.0
+        
+        events_in_significant_groups: int = sum(g['event_count'] for g in significant_groups)
+        outlier_events: int = len(events_df) - events_in_significant_groups
         
         # Assign group IDs to events - DEFENSIVE APPROACH
         events_with_groups = events_df.copy()
@@ -214,13 +307,13 @@ class SpatialGroupAnalyzer:
         
         if len(all_groups) > 0:
             # Build mapping: original_index -> group_id
-            idx_to_group = {}
+            idx_to_group: Dict[int, str] = {}
             for group_info in all_groups:
                 for event in group_info['events']:
                     idx_to_group[event['idx']] = group_info['group_id']
             
             # Verify all events are accounted for
-            assigned_count = 0
+            assigned_count: int = 0
             for idx in events_with_groups.index:
                 if idx in idx_to_group:
                     events_with_groups.loc[idx, 'group'] = idx_to_group[idx]
@@ -248,15 +341,23 @@ class SpatialGroupAnalyzer:
             'events_with_groups': events_with_groups
         }
 
-    def _empty_grouping_result(self, events_df):
-        """Return empty grouping result"""
+    def _empty_grouping_result(self, events_df: pd.DataFrame) -> Dict[str, Any]:
+        """
+        Return empty grouping result
+        
+        Args:
+            events_df: Empty events DataFrame
+            
+        Returns:
+            Empty grouping result dictionary
+        """
         return {
             'group_analysis': [],
             'significant_groups': [],
             'high_het_groups': [],
             'dominant_group': None,
             'dominant_group_events': 0,
-            'dominant_group_range': 0,
+            'dominant_group_range': 0.0,
             'outlier_events': 0,
             'events_with_groups': events_df.copy()
         }

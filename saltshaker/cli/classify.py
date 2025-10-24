@@ -1,8 +1,13 @@
 """Classify subcommand - pattern classification"""
 
+from __future__ import annotations
+from typing import Optional, List, Dict, Any
 from pathlib import Path
 import logging
+from argparse import ArgumentParser, Namespace, _SubParsersAction
+import pandas as pd
 
+from ..types import BlacklistRegion, ClassificationType
 from ..config import ClassificationConfig
 from ..classifier import EventClassifier
 from ..io import BlacklistReader, write_summary, write_vcf, write_intermediate, read_intermediate
@@ -10,8 +15,16 @@ from ..io import BlacklistReader, write_summary, write_vcf, write_intermediate, 
 logger = logging.getLogger(__name__)
 
 
-def add_parser(subparsers):
-    """Add classify subcommand parser"""
+def add_parser(subparsers: _SubParsersAction) -> ArgumentParser:
+    """
+    Add classify subcommand parser
+    
+    Args:
+        subparsers: Subparser action from main argument parser
+        
+    Returns:
+        Configured ArgumentParser for classify subcommand
+    """
     parser = subparsers.add_parser(
         'classify',
         help='Classify event pattern as Single or Multiple'
@@ -48,8 +61,13 @@ def add_parser(subparsers):
     return parser
 
 
-def run(args):
-    """Execute classify subcommand"""
+def run(args: Namespace) -> None:
+    """
+    Execute classify subcommand
+    
+    Args:
+        args: Parsed command-line arguments from argparse
+    """
     logger.info("=== SaltShaker: Pattern Classification ===")
     
     # Setup directories
@@ -73,17 +91,19 @@ def run(args):
                               f"Did you run 'saltshaker call --prefix {args.prefix}' first?")
     
     # Load events
+    events: pd.DataFrame
+    genome_length: int
     events, genome_length = read_intermediate(str(input_file))
     logger.info(f"Loaded {len(events)} events")
     logger.info(f"Genome length: {genome_length}")
     
     # Load blacklist regions
-    blacklist_regions = None
+    blacklist_regions: Optional[List[BlacklistRegion]] = None
     if args.blacklist is not None:
         if args.blacklist == 'default':
             # Use built-in default blacklist
             from ..data import DEFAULT_MT_BLACKLIST
-            blacklist_file = DEFAULT_MT_BLACKLIST
+            blacklist_file: str = DEFAULT_MT_BLACKLIST
             logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
@@ -121,6 +141,11 @@ def run(args):
     
     # Classify
     classifier = EventClassifier(genome_length, config)
+    
+    classification: ClassificationType
+    reason: str
+    criteria: Dict[str, Any]
+    events_with_groups: pd.DataFrame
     classification, reason, criteria, events_with_groups = classifier.classify(
         events, blacklist_regions=blacklist_regions
     )

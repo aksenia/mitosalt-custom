@@ -1,16 +1,29 @@
 """Plot subcommand - visualization"""
 
+from __future__ import annotations
+from typing import Optional, List, Tuple
 from pathlib import Path
 import logging
+from argparse import ArgumentParser, Namespace, _SubParsersAction
+import pandas as pd
 
+from ..types import BlacklistRegion, GeneAnnotation
 from ..visualizer import plot_circular
 from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
 
 logger = logging.getLogger(__name__)
 
 
-def add_parser(subparsers):
-    """Add plot subcommand parser"""
+def add_parser(subparsers: _SubParsersAction) -> ArgumentParser:
+    """
+    Add plot subcommand parser
+    
+    Args:
+        subparsers: Subparser action from main argument parser
+        
+    Returns:
+        Configured ArgumentParser for plot subcommand
+    """
     parser = subparsers.add_parser(
         'plot',
         help='Create circular genome visualization'
@@ -45,8 +58,13 @@ def add_parser(subparsers):
     return parser
 
 
-def run(args):
-    """Execute plot subcommand"""
+def run(args: Namespace) -> None:
+    """
+    Execute plot subcommand
+    
+    Args:
+        args: Parsed command-line arguments from argparse
+    """
     logger.info("=== SaltShaker: Circular Plot ===")
     
     # Setup directories
@@ -71,16 +89,18 @@ def run(args):
                               f"Did you run 'saltshaker classify --prefix {args.prefix}' first?")
     
     # Load events
+    events: pd.DataFrame
+    genome_length: int
     events, genome_length = read_intermediate(str(input_file))
     logger.info(f"Loaded {len(events)} events")
     
     # Load blacklist regions
-    blacklist_regions = None
+    blacklist_regions: Optional[List[BlacklistRegion]] = None
     if args.blacklist is not None:
         if args.blacklist == 'default':
             # Use built-in default blacklist
             from ..data import DEFAULT_MT_BLACKLIST
-            blacklist_file = DEFAULT_MT_BLACKLIST
+            blacklist_file: str = DEFAULT_MT_BLACKLIST
             logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
@@ -95,12 +115,12 @@ def run(args):
         logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
 
     # Load gene annotations
-    gene_annotations = None
+    gene_annotations: Optional[List[GeneAnnotation]] = None
     if args.genes is not None:
         if args.genes == 'default':
             # Use built-in default annotations
             from ..data import DEFAULT_MT_GENES
-            gene_file = DEFAULT_MT_GENES
+            gene_file: str = DEFAULT_MT_GENES
             logger.info("Using default hg38 MT gene annotations")
         else:
             # Use user-provided file
@@ -116,12 +136,14 @@ def run(args):
 
     # Create plot
     logger.info("Generating plot...")
+    
+    figsize: Tuple[int, int] = (args.figsize[0], args.figsize[1])
     plot_circular(
         events,
         str(plot_file),
         genome_length,
         blacklist_regions,
-        figsize=tuple(args.figsize),
+        figsize=figsize,
         direction=args.direction,
         del_color=args.del_color,
         dup_color=args.dup_color,

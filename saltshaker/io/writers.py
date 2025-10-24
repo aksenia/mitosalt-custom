@@ -4,11 +4,15 @@ I/O Writers
 Handles writing of analysis results in various formats.
 """
 
+from __future__ import annotations
+from typing import List, Dict, Any, Optional, Tuple
 import pandas as pd
 import numpy as np
 from pathlib import Path
 import logging
+
 from ..utils import crosses_blacklist
+from ..types import BlacklistRegion, ClassificationType
 
 logger = logging.getLogger(__name__)
 
@@ -16,16 +20,21 @@ logger = logging.getLogger(__name__)
 class TSVWriter:
     """Writes event results in TSV format"""
     
-    def __init__(self, genome_length):
+    def __init__(self, genome_length: int) -> None:
         """
         Initialize TSV writer
         
         Args:
             genome_length: Mitochondrial genome length
         """
-        self.genome_length = genome_length
+        self.genome_length: int = genome_length
     
-    def write(self, events, output_file, blacklist_regions=None):
+    def write(
+        self,
+        events: pd.DataFrame,
+        output_file: str,
+        blacklist_regions: Optional[List[BlacklistRegion]] = None
+    ) -> None:
         """
         Write events to TSV file with coordinate swapping for output
         
@@ -42,7 +51,6 @@ class TSVWriter:
             return
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-#        events.to_pickle(output_file + '.pkl')  # Save intermediate pickle for debugging
         
         res = events.copy()
         logger.debug(f"Starting save_results with {len(res)} events")
@@ -134,7 +142,12 @@ class TSVWriter:
         logger.info(f"Events: {len(res_final)}")
 
 
-def write_tsv(events, output_file, genome_length, blacklist_regions=None):
+def write_tsv(
+    events: pd.DataFrame,
+    output_file: str,
+    genome_length: int,
+    blacklist_regions: Optional[List[BlacklistRegion]] = None
+) -> None:
     """
     Convenience function to write TSV
     
@@ -152,7 +165,7 @@ class IntermediateWriter:
     """Writes events in full internal format for downstream processing"""
     
     @staticmethod
-    def write(events, output_file, genome_length):
+    def write(events: pd.DataFrame, output_file: str, genome_length: int) -> None:
         """
         Write events with all columns preserved for downstream processing
         
@@ -170,15 +183,28 @@ class IntermediateWriter:
         
         logger.info(f"Intermediate results saved to {output_file}")
     
-def write_intermediate(events, output_file, genome_length):
-    """Convenience function"""
+
+def write_intermediate(events: pd.DataFrame, output_file: str, genome_length: int) -> None:
+    """
+    Convenience function to write intermediate format
+    
+    Args:
+        events: DataFrame with events
+        output_file: Output file path
+        genome_length: Genome length
+    """
     IntermediateWriter.write(events, output_file, genome_length)
+
+
+from ..types import BlacklistRegion
+
+logger = logging.getLogger(__name__)
 
 
 class SummaryWriter:
     """Writes analysis summary in human-readable text format"""
     
-    def __init__(self, config=None):
+    def __init__(self, config: Optional[Any] = None) -> None:
         """
         Initialize summary writer
         
@@ -188,7 +214,14 @@ class SummaryWriter:
         from ..config import ClassificationConfig
         self.config = config or ClassificationConfig()
     
-    def write(self, events, output_file, analysis_stats, classification_result, blacklist_regions=None):
+    def write(
+        self,
+        events: pd.DataFrame,
+        output_file: str,
+        analysis_stats: Dict[str, Any],
+        classification_result: Tuple[str, str, Dict[str, Any], pd.DataFrame],
+        blacklist_regions: Optional[List[BlacklistRegion]] = None
+    ) -> None:
         """
         Write analysis summary with classification metrics
         
@@ -204,41 +237,35 @@ class SummaryWriter:
         # Load config for threshold reporting
         cfg = self.config
         
-        # Use passed classification results
-        if classification_result:
-            classification, reason, criteria, events_with_groups = classification_result
-        else:
-            # Fallback if not provided
-            if not events.empty:
-                classifier = EventClassifier(self.genome_length, self.config)
-                classification, reason, criteria, events_with_groups = classifier.classify(events, blacklist_regions)
-            else:
-                classification, reason = "No events", "No events detected"
-                criteria = {}
-                events_with_groups = pd.DataFrame()
+        # Unpack classification results
+        classification: str
+        reason: str
+        criteria: Dict[str, Any]
+        events_with_groups: pd.DataFrame
+        classification, reason, criteria, events_with_groups = classification_result
         
         # Count events by type
-        del_count = (events['final_event'] == 'del').sum() if not events.empty else 0
-        dup_count = (events['final_event'] == 'dup').sum() if not events.empty else 0
-        dloop_count = (events['dloop'] == 'yes').sum() if not events.empty else 0
+        del_count: int = int((events['final_event'] == 'del').sum()) if not events.empty else 0
+        dup_count: int = int((events['final_event'] == 'dup').sum()) if not events.empty else 0
+        dloop_count: int = int((events['dloop'] == 'yes').sum()) if not events.empty else 0
         
         # Calculate comprehensive statistics
         if not events.empty:
-            size_stats = {
-                'min': events['delsize'].min(),
-                'max': events['delsize'].max(),
-                'mean': events['delsize'].mean(),
-                'median': events['delsize'].median()
+            size_stats: Dict[str, float] = {
+                'min': float(events['delsize'].min()),
+                'max': float(events['delsize'].max()),
+                'mean': float(events['delsize'].mean()),
+                'median': float(events['delsize'].median())
             }
-            het_stats = {
-                'min': events['perc'].min(),
-                'max': events['perc'].max(),
-                'mean': events['perc'].mean(),
-                'median': events['perc'].median()
+            het_stats: Dict[str, float] = {
+                'min': float(events['perc'].min()),
+                'max': float(events['perc'].max()),
+                'mean': float(events['perc'].mean()),
+                'median': float(events['perc'].median())
             }
         else:
-            size_stats = {'min': 0, 'max': 0, 'mean': 0, 'median': 0}
-            het_stats = {'min': 0, 'max': 0, 'mean': 0, 'median': 0}
+            size_stats = {'min': 0.0, 'max': 0.0, 'mean': 0.0, 'median': 0.0}
+            het_stats = {'min': 0.0, 'max': 0.0, 'mean': 0.0, 'median': 0.0}
         
         # Write summary file with literature-based analysis
         with open(output_file, 'w') as f:
@@ -410,7 +437,15 @@ class SummaryWriter:
         if 'subtype' in criteria:
             logger.info(f"Pattern subtype: {criteria['subtype']}")
 
-def write_summary(events, output_file, analysis_stats, classification_result, config=None, blacklist_regions=None):
+
+def write_summary(
+    events: pd.DataFrame,
+    output_file: str,
+    analysis_stats: Dict[str, Any],
+    classification_result: Tuple[str, str, Dict[str, Any], pd.DataFrame],
+    config: Optional[Any] = None,
+    blacklist_regions: Optional[List[BlacklistRegion]] = None
+) -> None:
     """
     Convenience function to write summary
     
@@ -418,7 +453,7 @@ def write_summary(events, output_file, analysis_stats, classification_result, co
         events: DataFrame with events
         output_file: Output summary file path
         analysis_stats: Workflow statistics dict
-        classification_result: Classification tuple
+        classification_result: Classification tuple (classification, reason, criteria, events_with_groups)
         config: ClassificationConfig instance
         blacklist_regions: List of blacklist regions
     """

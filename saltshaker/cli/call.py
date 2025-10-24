@@ -1,17 +1,33 @@
 """Call subcommand - event calling (del/dup classification)"""
 
+from __future__ import annotations
+from typing import Optional, List, TYPE_CHECKING
 import numpy as np
 from pathlib import Path
 import logging
+from argparse import ArgumentParser, Namespace, _SubParsersAction
 
-from ..event_caller import EventCaller
-from ..io import BlacklistReader, write_tsv, write_intermediate
+# Type checking imports (not used at runtime)
+if TYPE_CHECKING:
+    from .types import BlacklistRegion
+
+# These would be actual imports in the real module
+# from ..event_caller import EventCaller
+# from ..io import BlacklistReader, write_tsv, write_intermediate
 
 logger = logging.getLogger(__name__)
 
 
-def add_parser(subparsers):
-    """Add call subcommand parser"""
+def add_parser(subparsers: _SubParsersAction) -> ArgumentParser:
+    """
+    Add call subcommand parser
+    
+    Args:
+        subparsers: Subparser action from main argument parser
+        
+    Returns:
+        Configured ArgumentParser for call subcommand
+    """
     parser = subparsers.add_parser(
         'call',
         help='Call events as deletions or duplications'
@@ -56,8 +72,13 @@ def add_parser(subparsers):
     return parser
 
 
-def run(args):
-    """Execute call subcommand"""
+def run(args: Namespace) -> None:
+    """
+    Execute call subcommand
+    
+    Args:
+        args: Parsed command-line arguments from argparse
+    """
     logger.info("=== SaltShaker: Event Calling ===")
     
     # Create output directory
@@ -72,6 +93,9 @@ def run(args):
     logger.info(f"Output directory: {output_dir}")
     
     # Initialize EventCaller
+    # Note: In real code, EventCaller would be imported from ..event_caller
+    from ..event_caller import EventCaller  # type: ignore
+    
     event_caller = EventCaller(
         genome_length=args.genome_length,
         ori_h=(args.ori_h_start, args.ori_h_end),
@@ -81,12 +105,12 @@ def run(args):
     )
     
     # Load blacklist regions
-    blacklist_regions = None
+    blacklist_regions: Optional[List[BlacklistRegion]] = None
     if args.blacklist is not None:
         if args.blacklist == 'default':
             # Use built-in default blacklist
-            from ..data import DEFAULT_MT_BLACKLIST
-            blacklist_file = DEFAULT_MT_BLACKLIST
+            from ..data import DEFAULT_MT_BLACKLIST  # type: ignore
+            blacklist_file: str = DEFAULT_MT_BLACKLIST
             logger.info("Using default MT blacklist regions")
         else:
             # Use user-provided file
@@ -98,6 +122,7 @@ def run(args):
             raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
         
         try:
+            from ..io import BlacklistReader  # type: ignore
             blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
             logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
         except Exception as e:
@@ -134,6 +159,7 @@ def run(args):
     events = event_caller.add_flanking_sequences(events, args.reference)
     
     # Write intermediate format (all columns) for downstream processing
+    from ..io import write_intermediate, write_tsv  # type: ignore
     write_intermediate(events, str(intermediate_tsv), args.genome_length)
     
     # Write display TSV (formatted, human-readable)

@@ -5,6 +5,8 @@ Implements the del/dup classification from Basu et al. PLoS Genetics 2020.
 Direct port of delplot.R logic - must remain functionally identical.
 """
 
+from __future__ import annotations
+from typing import Tuple, List, Optional
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -26,21 +28,52 @@ class EventCaller:
     """
     
     @staticmethod
-    def _parse_comma_separated_median(x):
-        """Calculate median from comma-separated integer string"""
-        return np.median([int(i) for i in str(x).split(',')])
+    def _parse_comma_separated_median(x: str) -> float:
+        """
+        Calculate median from comma-separated integer string
+        
+        Args:
+            x: Comma-separated integer string
+            
+        Returns:
+            Median value
+        """
+        return float(np.median([int(i) for i in str(x).split(',')]))
     
     @staticmethod
-    def _parse_comma_separated_min(x):
-        """Calculate minimum from comma-separated integer string"""
+    def _parse_comma_separated_min(x: str) -> int:
+        """
+        Calculate minimum from comma-separated integer string
+        
+        Args:
+            x: Comma-separated integer string
+            
+        Returns:
+            Minimum value
+        """
         return min([int(i) for i in str(x).split(',')])
     
     @staticmethod
-    def _parse_comma_separated_max(x):
-        """Calculate maximum from comma-separated integer string"""
+    def _parse_comma_separated_max(x: str) -> int:
+        """
+        Calculate maximum from comma-separated integer string
+        
+        Args:
+            x: Comma-separated integer string
+            
+        Returns:
+            Maximum value
+        """
         return max([int(i) for i in str(x).split(',')])
     
-    def __init__(self, genome_length, ori_h, ori_l, heteroplasmy_limit=0.01, flank_size=15):
+    def __init__(
+        self,
+        genome_length: int,
+        ori_h: Tuple[int, int],
+        ori_l: Tuple[int, int],
+        heteroplasmy_limit: float = 0.01,
+        flank_size: int = 15
+    ) -> None:
         """
         Initialize EventCaller
         
@@ -51,13 +84,13 @@ class EventCaller:
             heteroplasmy_limit: Minimum heteroplasmy to include (default: 0.01 = 1%)
             flank_size: Bases to extract around breakpoints (default: 15)
         """
-        self.genome_length = genome_length
-        self.ori_h = ori_h
-        self.ori_l = ori_l
-        self.heteroplasmy_limit = heteroplasmy_limit
-        self.flank_size = flank_size
+        self.genome_length: int = genome_length
+        self.ori_h: Tuple[int, int] = ori_h
+        self.ori_l: Tuple[int, int] = ori_l
+        self.heteroplasmy_limit: float = heteroplasmy_limit
+        self.flank_size: int = flank_size
     
-    def call_events(self, cluster_file, breakpoint_file):
+    def call_events(self, cluster_file: str, breakpoint_file: str) -> pd.DataFrame:
         """
         Load cluster/breakpoint data and call events as deletions or duplications
         
@@ -81,11 +114,22 @@ class EventCaller:
         
         return events
     
-    def _load_and_merge_data(self, cluster_file, breakpoint_file):
+    def _load_and_merge_data(
+        self,
+        cluster_file: str,
+        breakpoint_file: str
+    ) -> pd.DataFrame:
         """
         Load cluster and breakpoint files and merge them
         
         Direct port of R script logic for loading and merging data
+        
+        Args:
+            cluster_file: Path to cluster file
+            breakpoint_file: Path to breakpoint file
+            
+        Returns:
+            Merged DataFrame with events
         """
         # Check if cluster file is empty
         if Path(cluster_file).stat().st_size == 0:
@@ -99,7 +143,7 @@ class EventCaller:
         clusters = clusters[~clusters['cluster'].isna()]
         
         # Extract sample name
-        sample_name = Path(cluster_file).name.replace('.cluster', '')
+        sample_name: str = Path(cluster_file).name.replace('.cluster', '')
         clusters['sample'] = sample_name
         
         logger.info(f"Loaded {len(clusters)} clusters")
@@ -117,8 +161,8 @@ class EventCaller:
         clusters['del_end_range'] = clusters['del_end_min'].astype(str) + ' - ' + clusters['del_end_max'].astype(str)
         
         # Create list.reads exactly like R script
-        list_reads = []
-        length_list_reads = []
+        list_reads: List[str] = []
+        length_list_reads: List[int] = []
         
         for idx, row in clusters.iterrows():
             reads = row['read'].split(',')
@@ -127,7 +171,7 @@ class EventCaller:
             length_list_reads.append(len(reads))
         
         # Create res.read 
-        res_read_data = []
+        res_read_data: List[dict] = []
         for i, row in clusters.iterrows():
             sample = row['sample'] 
             cluster = row['cluster']
@@ -196,7 +240,7 @@ class EventCaller:
         
         return final_clusters
     
-    def _classify_del_or_dup(self, clusters):
+    def _classify_del_or_dup(self, clusters: pd.DataFrame) -> pd.DataFrame:
         """
         Classify events as deletions or duplications based on origin overlap
         
@@ -208,6 +252,12 @@ class EventCaller:
         2. Check overlap with OriH (heavy strand origin)
         3. Check overlap with OriL (light strand origin)
         4. Events overlapping origins are reclassified as duplications
+        
+        Args:
+            clusters: DataFrame with event data
+            
+        Returns:
+            DataFrame with final_event column added
         """
         logger.info(f"Starting classification with {len(clusters)} events")
         logger.debug(f"OriH: {self.ori_h}, OriL: {self.ori_l}")
@@ -217,10 +267,10 @@ class EventCaller:
         
         # First loop: OriH classification (no coordinate swapping)
         for i in clusters.index:
-            Rs = self.ori_h[0]  # ohs
-            Re = self.ori_h[1]  # ohe
-            Ds = clusters.loc[i, 'del_start_median']
-            De = clusters.loc[i, 'del_end_median']
+            Rs: int = self.ori_h[0]  # ohs
+            Re: int = self.ori_h[1]  # ohe
+            Ds: float = clusters.loc[i, 'del_start_median']
+            De: float = clusters.loc[i, 'del_end_median']
             
             # R script OriH logic (no swapping of coordinates)
             if Re >= Rs:
@@ -238,12 +288,12 @@ class EventCaller:
                 elif (De < Ds):
                     clusters.loc[i, 'final_event'] = 'dup'
         
-        after_orih = (clusters['final_event'] == 'dup').sum()
+        after_orih: int = int((clusters['final_event'] == 'dup').sum())
         logger.debug(f"After OriH: {after_orih} events classified as dup")
         
         # Second loop: OriL classification (coordinate swapping for dloop=='yes')
         for i in clusters.index:
-            dloop = clusters.loc[i, 'dloop']
+            dloop: str = str(clusters.loc[i, 'dloop'])
             Rs = self.ori_l[0]  # ols
             Re = self.ori_l[1]  # ole
             
@@ -272,14 +322,27 @@ class EventCaller:
                     clusters.loc[i, 'final_event'] = 'dup'
         
         # Final counts
-        del_count = (clusters['final_event'] == 'del').sum()
-        dup_count = (clusters['final_event'] == 'dup').sum()
+        del_count: int = int((clusters['final_event'] == 'del').sum())
+        dup_count: int = int((clusters['final_event'] == 'dup').sum())
         logger.info(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
         
         return clusters
     
-    def add_flanking_sequences(self, events, genome_fasta):
-        """Extract flanking sequences around breakpoints"""
+    def add_flanking_sequences(
+        self,
+        events: pd.DataFrame,
+        genome_fasta: str
+    ) -> pd.DataFrame:
+        """
+        Extract flanking sequences around breakpoints
+        
+        Args:
+            events: DataFrame with events
+            genome_fasta: Path to reference genome FASTA
+            
+        Returns:
+            DataFrame with seq1, seq2, seq columns added
+        """
         if not genome_fasta or not Path(genome_fasta).exists():
             events['seq1'] = 'NA'
             events['seq2'] = 'NA'
@@ -288,9 +351,9 @@ class EventCaller:
         
         try:
             genome_record = next(SeqIO.parse(genome_fasta, 'fasta'))
-            genome_seq = str(genome_record.seq).upper()
+            genome_seq: str = str(genome_record.seq).upper()
                         
-            flanking_results = self._align_breakpoints(
+            flanking_results: pd.DataFrame = self._align_breakpoints(
                 events['final_start'] - 1,
                 events['final_end'],
                 genome_seq,
@@ -317,80 +380,95 @@ class EventCaller:
         
         return events
     
-    def _align_breakpoints(self, starts, ends, genome_seq, flank_size=15):
+    def _align_breakpoints(
+        self,
+        starts: pd.Series,
+        ends: pd.Series,
+        genome_seq: str,
+        flank_size: int = 15
+    ) -> pd.DataFrame:
         """
         Python implementation of R align.bp function with DEBUG OUTPUT
+        
+        Args:
+            starts: Series of start positions (0-based)
+            ends: Series of end positions (0-based)
+            genome_seq: Reference genome sequence
+            flank_size: Number of bases to extract on each side
+            
+        Returns:
+            DataFrame with seq1, seq2, seq columns
         """
-        results = []
+        results: List[dict] = []
         
         for idx, (start, end) in enumerate(zip(starts, ends)):
             # Convert to 1-based coordinates like R
-            start_1based = int(start) + 1
-            end_1based = int(end) + 1
+            start_1based: int = int(start) + 1
+            end_1based: int = int(end) + 1
                     
             # Extract sequences - R: substr(mt.fa, start-nb, start+nb)
-            bp_start_genome = max(1, start_1based - flank_size)
-            bp_end_genome = min(len(genome_seq), start_1based + flank_size)
-            bp = genome_seq[bp_start_genome-1:bp_end_genome]
+            bp_start_genome: int = max(1, start_1based - flank_size)
+            bp_end_genome: int = min(len(genome_seq), start_1based + flank_size)
+            bp: str = genome_seq[bp_start_genome-1:bp_end_genome]
             
-            bp1_start_genome = max(1, end_1based - flank_size)
-            bp1_end_genome = min(len(genome_seq), end_1based + flank_size)
-            bp1 = genome_seq[bp1_start_genome-1:bp1_end_genome]
+            bp1_start_genome: int = max(1, end_1based - flank_size)
+            bp1_end_genome: int = min(len(genome_seq), end_1based + flank_size)
+            bp1: str = genome_seq[bp1_start_genome-1:bp1_end_genome]
                         
             # Build display strings
-            bp_1 = genome_seq[max(0, start_1based-flank_size-1):start_1based-1]
-            bp_2 = genome_seq[start_1based:min(len(genome_seq), start_1based+flank_size)]
-            bp_res = f"{bp_1}*{bp_2}"
+            bp_1: str = genome_seq[max(0, start_1based-flank_size-1):start_1based-1]
+            bp_2: str = genome_seq[start_1based:min(len(genome_seq), start_1based+flank_size)]
+            bp_res: str = f"{bp_1}*{bp_2}"
             
-            bp1_1 = genome_seq[max(0, end_1based-flank_size-1):end_1based-1]
-            bp1_2 = genome_seq[end_1based:min(len(genome_seq), end_1based+flank_size)]
-            bp1_res = f"{bp1_1}*{bp1_2}"
+            bp1_1: str = genome_seq[max(0, end_1based-flank_size-1):end_1based-1]
+            bp1_2: str = genome_seq[end_1based:min(len(genome_seq), end_1based+flank_size)]
+            bp1_res: str = f"{bp1_1}*{bp1_2}"
             
             # Pattern matching
-            a = bp.replace('N', 'A')
-            b = bp1.replace('N', 'A')
-            seq_result = "NA"
+            a: str = bp.replace('N', 'A')
+            b: str = bp1.replace('N', 'A')
+            seq_result: str = "NA"
             
             if len(a) < 31 or len(b) < 31:
                 logger.debug("SKIP: Sequences too short (need 31bp)")
                 results.append({'seq1': bp_res, 'seq2': bp1_res, 'seq': seq_result})
                 continue
                         
-            size = 15
-            found = False
+            size: int = 15
+            found: bool = False
             
             for i in range(1, 14):
                 if found:
                     break
                 size = size - 1
                 
-                posa = 1
-                posb = 1 + size - 1
+                posa: int = 1
+                posb: int = 1 + size - 1
                 
-                tested_count = 0
+                tested_count: int = 0
                 while posb <= 31:
                     if found:
                         break
                     
                     if posa <= 17 and posb >= 15:
-                        tmp = a[posa-1:posb]
+                        tmp: str = a[posa-1:posb]
                         
                         # Find matches in b
-                        matches = []
-                        search_pos = 0
+                        matches: List[Tuple[int, int]] = []
+                        search_pos: int = 0
                         while True:
-                            match_idx = b.find(tmp, search_pos)
+                            match_idx: int = b.find(tmp, search_pos)
                             if match_idx == -1:
                                 break
-                            start1 = match_idx + 1  # Convert to R 1-based
-                            end1 = match_idx + len(tmp)  # R 1-based inclusive end
+                            start1: int = match_idx + 1  # Convert to R 1-based
+                            end1: int = match_idx + len(tmp)  # R 1-based inclusive end
                             matches.append((start1, end1))
                             search_pos = match_idx + 1
                         
                         if tested_count == 0:  # Show first attempt at each size
                             if matches:
                                 for s1, e1 in matches:
-                                    overlaps = s1 <= 17 and e1 >= 15
+                                    overlaps: bool = s1 <= 17 and e1 >= 15
                         
                         tested_count += 1
                         

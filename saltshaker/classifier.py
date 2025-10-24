@@ -1,25 +1,44 @@
 """
-Event Classifier
+Event classifier
 
 Naive rule-based classification of mitochondrial event patterns as Single or Multiple.
 """
 
+from __future__ import annotations
+from typing import Tuple, Dict, Any, Optional, List
 import pandas as pd
 import numpy as np
+
 from .config import ClassificationConfig
 from .spatial import SpatialGroupAnalyzer
 from .utils import crosses_blacklist
+from .types import BlacklistRegion, ClassificationType
 
 
 class EventClassifier:
     """Classifies overall pattern of mitochondrial events"""
     
-    def __init__(self, genome_length, config=None):
-        self.genome_length = genome_length
-        self.config = config or ClassificationConfig()
-        self.spatial_analyzer = SpatialGroupAnalyzer(genome_length, config)
+    def __init__(
+        self,
+        genome_length: int,
+        config: Optional[ClassificationConfig] = None
+    ) -> None:
+        """
+        Initialize EventClassifier
+        
+        Args:
+            genome_length: Mitochondrial genome length
+            config: ClassificationConfig instance (uses defaults if None)
+        """
+        self.genome_length: int = genome_length
+        self.config: ClassificationConfig = config or ClassificationConfig()
+        self.spatial_analyzer: SpatialGroupAnalyzer = SpatialGroupAnalyzer(genome_length, config)
     
-    def _add_blacklist_events_with_groups(self, events_with_groups, all_events):
+    def _add_blacklist_events_with_groups(
+        self,
+        events_with_groups: pd.DataFrame,
+        all_events: pd.DataFrame
+    ) -> pd.DataFrame:
         """
         Add blacklist-crossing events back with BL group labels
         
@@ -41,7 +60,11 @@ class EventClassifier:
         
         return pd.concat([events_with_groups, blacklist_events], ignore_index=True)
     
-    def classify(self, events: pd.DataFrame, blacklist_regions=None):
+    def classify(
+        self,
+        events: pd.DataFrame,
+        blacklist_regions: Optional[List[BlacklistRegion]] = None
+    ) -> Tuple[ClassificationType, str, Dict[str, Any], pd.DataFrame]:
         """
         Classify events as Single or Multiple pattern
         
@@ -57,12 +80,12 @@ class EventClassifier:
         
         # Load config
         cfg = self.config
-        HIGH_HET = cfg.HIGH_HET_THRESHOLD
-        NOISE = cfg.NOISE_THRESHOLD
-        CLUSTER_RADIUS = cfg.CLUSTER_RADIUS
-        MIN_CLUSTER_SIZE = cfg.MIN_CLUSTER_SIZE
-        MULTIPLE_THRESHOLD = cfg.MULTIPLE_EVENT_THRESHOLD
-        DOMINANT_FRACTION = cfg.DOMINANT_GROUP_FRACTION
+        HIGH_HET: float = cfg.HIGH_HET_THRESHOLD
+        NOISE: float = cfg.NOISE_THRESHOLD
+        CLUSTER_RADIUS: int = cfg.CLUSTER_RADIUS
+        MIN_CLUSTER_SIZE: int = cfg.MIN_CLUSTER_SIZE
+        MULTIPLE_THRESHOLD: int = cfg.MULTIPLE_EVENT_THRESHOLD
+        DOMINANT_FRACTION: float = cfg.DOMINANT_GROUP_FRACTION
         
         # Filter blacklist-crossing events AND mark them
         if blacklist_regions:
@@ -73,24 +96,24 @@ class EventClassifier:
             )
             
             clean_events = events[~events['blacklist_crossing']].copy()
-            blacklist_filtered = len(events) - len(clean_events)
+            blacklist_filtered: int = len(events) - len(clean_events)
             
             # EDGE CASE: All events cross blacklist
             if len(clean_events) == 0:
-                classification = "Blacklist-only"
-                reason = f"All {len(events)} event(s) cross blacklisted regions"
+                classification: ClassificationType = "Blacklist-only"
+                reason: str = f"All {len(events)} event(s) cross blacklisted regions"
                 
-                criteria = {
+                criteria: Dict[str, Any] = {
                     'total_events': 0,
                     'total_raw_events': len(events),
                     'blacklist_filtered': blacklist_filtered,
                     'significant_count': 0,
-                    'max_heteroplasmy': events['perc'].max(),
+                    'max_heteroplasmy': float(events['perc'].max()),
                     'subtype': "All events in blacklist regions"
                 }
                 
                 # Assign BL groups to all events for VCF/plotting using helper
-                events_with_groups = pd.DataFrame()  # Start empty
+                events_with_groups: pd.DataFrame = pd.DataFrame()  # Start empty
                 events_with_groups = self._add_blacklist_events_with_groups(events_with_groups, events)
                 
                 return classification, reason, criteria, events_with_groups
@@ -101,19 +124,19 @@ class EventClassifier:
             blacklist_filtered = 0
         
         # Basic event metrics
-        total_events = len(clean_events)
+        total_events: int = len(clean_events)
         high_het_events = clean_events[clean_events['perc'] >= HIGH_HET]
         significant_events = clean_events[clean_events['perc'] >= NOISE]
         
         # Get metrics from significant events only, fallback on total without blacklisted
-        max_het = significant_events['perc'].max() if len(significant_events) > 0 else clean_events['perc'].max()
-        median_het = significant_events['perc'].median() if len(significant_events) > 0 else clean_events['perc'].median()
+        max_het: float = float(significant_events['perc'].max()) if len(significant_events) > 0 else float(clean_events['perc'].max())
+        median_het: float = float(significant_events['perc'].median()) if len(significant_events) > 0 else float(clean_events['perc'].median())
         
         # Counts for classification
-        significant_count = len(significant_events)
-        high_het_count = len(high_het_events)
-        del_count = (significant_events['final_event'] == 'del').sum()
-        dup_count = (significant_events['final_event'] == 'dup').sum()
+        significant_count: int = len(significant_events)
+        high_het_count: int = len(high_het_events)
+        del_count: int = int((significant_events['final_event'] == 'del').sum())
+        dup_count: int = int((significant_events['final_event'] == 'dup').sum())
         
         # ============================================================
         # CLASSIFICATION LOGIC
@@ -176,7 +199,7 @@ class EventClassifier:
         # RULE 3: Main Single vs Multiple classification
         else:
             # Perform spatial grouping analysis
-            grouping_results = self.spatial_analyzer.group_events(
+            grouping_results: Dict[str, Any] = self.spatial_analyzer.group_events(
                 clean_events,
                 CLUSTER_RADIUS,
                 HIGH_HET,
@@ -185,25 +208,25 @@ class EventClassifier:
             )
             
             events_with_groups = grouping_results['events_with_groups']
-            group_analysis = grouping_results['group_analysis']
-            dominant_group_count = grouping_results['dominant_group_events']
+            group_analysis: List[Dict[str, Any]] = grouping_results['group_analysis']
+            dominant_group_count: int = grouping_results['dominant_group_events']
             
             # Calculate dominant group fraction
-            dominant_fraction = dominant_group_count / total_events if total_events > 0 else 0
+            dominant_fraction: float = dominant_group_count / total_events if total_events > 0 else 0.0
             
             # Can we assess spatial distribution?
-            can_assess_spatial = total_events >= MIN_CLUSTER_SIZE
+            can_assess_spatial: bool = total_events >= MIN_CLUSTER_SIZE
             
             # Pattern indicators - based on SIGNIFICANT events
-            has_high_het = len(high_het_events) > 0
-            few_events = significant_count <= MULTIPLE_THRESHOLD
-            many_events = significant_count > MULTIPLE_THRESHOLD
-            no_high_het = len(high_het_events) == 0
+            has_high_het: bool = len(high_het_events) > 0
+            few_events: bool = significant_count <= MULTIPLE_THRESHOLD
+            many_events: bool = significant_count > MULTIPLE_THRESHOLD
+            no_high_het: bool = len(high_het_events) == 0
             
             # Spatial metrics
             if can_assess_spatial:
-                dominant_group_pattern = dominant_fraction >= DOMINANT_FRACTION
-                dispersed = dominant_fraction < DOMINANT_FRACTION
+                dominant_group_pattern: bool = dominant_fraction >= DOMINANT_FRACTION
+                dispersed: bool = dominant_fraction < DOMINANT_FRACTION
             else:
                 dominant_group_pattern = False
                 dispersed = False
@@ -215,7 +238,7 @@ class EventClassifier:
             # SINGLE: high-het AND (few events OR dominant group)
             if has_high_het and (few_events or dominant_group_pattern):
                 classification = "Single"
-                reasons = []
+                reasons: List[str] = []
                 
                 if len(high_het_events) <= 3:
                     reasons.append(f"{len(high_het_events)} high-het event(s) (≥{HIGH_HET:.0f}%)")

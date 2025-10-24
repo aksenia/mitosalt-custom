@@ -1,11 +1,14 @@
 """
-VCF Writer for MitoSAlt Events
+VCF writer for MitoSAlt events
 Outputs structural variants in VCF 4.3 format
 """
 
+from __future__ import annotations
+from typing import Optional, TextIO, List
 from datetime import datetime
 from pathlib import Path
 import logging
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +16,11 @@ logger = logging.getLogger(__name__)
 class VCFWriter:
     """Write mitochondrial events in VCF format"""
     
-    def __init__(self, reference_name="chrM", sample_name=None):
+    def __init__(
+        self,
+        reference_name: str = "chrM",
+        sample_name: Optional[str] = None
+    ) -> None:
         """
         Initialize VCF writer
         
@@ -21,24 +28,29 @@ class VCFWriter:
             reference_name: Chromosome/contig name (default: "chrM")
             sample_name: Sample identifier (extracted from data if None)
         """
-        self.reference_name = reference_name
-        self.sample_name = sample_name
+        self.reference_name: str = reference_name
+        self.sample_name: Optional[str] = sample_name
     
-    def write(self, events_df, output_file, genome_length=16569):
+    def write(
+        self,
+        events_df: pd.DataFrame,
+        output_file: str,
+        genome_length: int = 16569
+    ) -> None:
         """
         Write events to VCF file
         
         Args:
             events_df: DataFrame with events (must have group column from classify)
             output_file: Path to output VCF file
-            genome_length: Length of mitochondrial genome
+            genome_length: Length of mitochondrial genome (default: 16569)
         """
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
         
         # Extract sample name if not provided
         if self.sample_name is None:
             if 'sample' in events_df.columns:
-                self.sample_name = events_df['sample'].iloc[0]
+                self.sample_name = str(events_df['sample'].iloc[0])
             else:
                 self.sample_name = "SAMPLE"
         
@@ -55,8 +67,14 @@ class VCFWriter:
         logger.info(f"VCF output saved to {output_file}")
         logger.info(f"Wrote {len(events_df)} events in VCF format")
 
-    def _write_header(self, f, genome_length):
-        """Write VCF header"""
+    def _write_header(self, f: TextIO, genome_length: int) -> None:
+        """
+        Write VCF header
+        
+        Args:
+            f: File handle to write to
+            genome_length: Length of mitochondrial genome
+        """
         # File format
         f.write("##fileformat=VCFv4.3\n")
         f.write(f"##fileDate={datetime.now().strftime('%Y%m%d')}\n")
@@ -87,23 +105,31 @@ class VCFWriter:
         # Column header
         f.write(f"#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t{self.sample_name}\n")
     
-    def _event_to_vcf(self, event):
-        """Convert single event to VCF line"""
+    def _event_to_vcf(self, event: pd.Series) -> str:
+        """
+        Convert single event to VCF line
+        
+        Args:
+            event: Series with event data
+            
+        Returns:
+            Formatted VCF line string
+        """
         # Basic fields
-        chrom = self.reference_name
-        pos = int(event['del_start_median'])
-        id_field = "."
-        ref = "N"  # Symbolic
+        chrom: str = self.reference_name
+        pos: int = int(event['del_start_median'])
+        id_field: str = "."
+        ref: str = "N"  # Symbolic
         
         # ALT based on event type
-        svtype = "DEL" if event['final_event'] == 'del' else "DUP"
-        alt = f"<{svtype}>"
+        svtype: str = "DEL" if event['final_event'] == 'del' else "DUP"
+        alt: str = f"<{svtype}>"
         
-        qual = "."
-        filter_field = "PASS"
+        qual: str = "."
+        filter_field: str = "PASS"
         
         # INFO field
-        info_parts = [
+        info_parts: List[str] = [
             f"SVTYPE={svtype}",
             f"END={int(event['del_end_median'])}",
             f"SVLEN={int(event['delsize'])}",
@@ -119,19 +145,19 @@ class VCFWriter:
         if bl_cross is True or bl_cross == 'yes' or str(bl_cross).lower() == 'true':
             info_parts.append("BLCROSS")
         
-        info = ";".join(info_parts)
+        info: str = ";".join(info_parts)
         
         # FORMAT field
-        format_field = "GT:AD"
+        format_field: str = "GT:AD"
         
         # Sample field
-        gt = "0/1"
-        alt_reads = int(event.get('nread', 0))
-        ref_reads = int(event.get('tread', 0)) - alt_reads
-        sample_field = f"{gt}:{alt_reads},{ref_reads}"
+        gt: str = "0/1"
+        alt_reads: int = int(event.get('nread', 0))
+        ref_reads: int = int(event.get('tread', 0)) - alt_reads
+        sample_field: str = f"{gt}:{alt_reads},{ref_reads}"
         
         # Combine
-        vcf_line = "\t".join([
+        vcf_line: str = "\t".join([
             chrom, str(pos), id_field, ref, alt, qual, filter_field,
             info, format_field, sample_field
         ])
@@ -139,7 +165,13 @@ class VCFWriter:
         return vcf_line
 
 
-def write_vcf(events_df, output_file, genome_length, reference_name="chrM", sample_name=None):
+def write_vcf(
+    events_df: pd.DataFrame,
+    output_file: str,
+    genome_length: int,
+    reference_name: str = "chrM",
+    sample_name: Optional[str] = None
+) -> None:
     """
     Convenience function to write VCF
     
@@ -147,8 +179,8 @@ def write_vcf(events_df, output_file, genome_length, reference_name="chrM", samp
         events_df: DataFrame with mitochondrial events (must have group column)
         output_file: Output VCF file path
         genome_length: Mitochondrial genome length
-        reference_name: Chromosome/contig name
-        sample_name: Sample identifier
+        reference_name: Chromosome/contig name (default: "chrM")
+        sample_name: Sample identifier (default: None, extracted from data)
     """
     writer = VCFWriter(reference_name=reference_name, sample_name=sample_name)
     writer.write(events_df, output_file, genome_length)
