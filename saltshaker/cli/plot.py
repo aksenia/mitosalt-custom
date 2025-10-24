@@ -3,8 +3,6 @@
 from pathlib import Path
 import logging
 
-from logistro import parser
-
 from ..visualizer import plot_circular
 from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
 
