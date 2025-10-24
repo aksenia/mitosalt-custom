@@ -58,7 +58,7 @@ class CircularPlotter:
 
         """
         
-        if len(events) == 0:
+        if events.empty:
             logger.warning("No events to plot")
             return
         
@@ -133,7 +133,7 @@ class CircularPlotter:
         # NESTED FUNCTIONS
         def assign_radii_by_type(data, base_radius=380, radius_diff=8):
             """Assign radii to events of a single type within their allocated radius range"""
-            if len(data) == 0:
+            if data.empty:
                 return data
             
             data = data.sort_values(['group', 'deg1'], ascending=[True, True]).reset_index(drop=True)
@@ -221,7 +221,7 @@ class CircularPlotter:
             """Calculate dynamic radius layout with proportional space allocation"""
             
             def calculate_space_needed(data):
-                if len(data) == 0:
+                if data.empty:
                     return 0
                 groups = data['group'].unique()
                 group_counts = data['group'].value_counts().to_dict()
@@ -246,8 +246,8 @@ class CircularPlotter:
             
             # Determine outer vs inner based on MEDIAN SIZE (largest type goes outside)
             # Keep type separation: all dels in one ring, all dups in another
-            del_median_size = dat_del['delsize'].median() if len(dat_del) > 0 else 0
-            dup_median_size = dat_dup['delsize'].median() if len(dat_dup) > 0 else 0
+            del_median_size = dat_del['delsize'].median() if not dat_del.empty else 0
+            dup_median_size = dat_dup['delsize'].median() if not dat_dup.empty else 0
 
             if dup_median_size > del_median_size:
                 # Duplications are larger → put ALL dups outside, ALL dels inside
@@ -271,9 +271,9 @@ class CircularPlotter:
             logger.debug(f"Ranges - Inner: [0-{inner_max:.1f}], Outer: [{outer_min:.1f}-{base_radius}], BL: {blacklist_radius:.1f}")
             
             # Assign radii within ranges
-            if len(inner_data) > 0:
+            if not inner_data.empty:
                 inner_data = assign_radii_by_type(inner_data, base_radius=inner_max, radius_diff=6)
-            if len(outer_data) > 0:
+            if not outer_data.empty:
                 outer_data = assign_radii_by_type(outer_data, base_radius=base_radius, radius_diff=6)
 
             circle_radius = base_radius + 12  # Circle drawn slightly outside events
@@ -290,14 +290,14 @@ class CircularPlotter:
         dat_dup = dat[dat['final_event'] == 'dup'].copy()
 
         # Process duplication delsize
-        if len(dat_dup) > 0:
+        if not dat_dup.empty:
             dat_dup['delsize'] = self.genome_length - dat_dup['delsize']
 
         # Calculate dynamic layout
         dat_del, dat_dup, blacklist_radius, dynamic_radius = calculate_dynamic_radius_layout(dat_del, dat_dup, base_radius=400)
 
         # Combine for processing
-        dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if len(dat_dup) > 0 else dat_del
+        dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if not dat_dup.empty else dat_del
         
         # Calculate color scales based on scale parameter
         del_events = dat_processed[dat_processed['final_event'] == 'del']
@@ -314,14 +314,14 @@ class CircularPlotter:
             logger.info("Using fixed heteroplasmy scale: 0-100%")
         else:  # dynamic
             # Dynamic scale: min-max within each category
-            del_max = del_events['value'].max() if len(del_events) > 0 else 0
-            del_min = del_events['value'].min() if len(del_events) > 0 else 0
-            dup_max = dup_events['value'].max() if len(dup_events) > 0 else 0  
-            dup_min = dup_events['value'].min() if len(dup_events) > 0 else 0
+            del_max = del_events['value'].max() if not del_events.empty else 0
+            del_min = del_events['value'].min() if not del_events.empty else 0
+            dup_max = dup_events['value'].max() if not dup_events.empty else 0  
+            dup_min = dup_events['value'].min() if not dup_events.empty else 0
             # Calculate BL min/max for gradient coloring (needed for event plotting)
             if blacklist_regions:
                 bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
-                if len(bl_events_temp) > 0:
+                if not bl_events_temp.empty:
                     bl_min = bl_events_temp['value'].min()
                     bl_max = bl_events_temp['value'].max()
                 else:
@@ -409,7 +409,7 @@ class CircularPlotter:
         # Add blacklist regions
         if blacklist_regions:
             # Find actual minimum event radius for inward lines
-            min_event_radius = dat_processed['radius'].min() if len(dat_processed) > 0 else 50
+            min_event_radius = dat_processed['radius'].min() if not dat_processed.empty else 50
             
             for region in blacklist_regions:
                 start_pos = int(region['start'])
@@ -516,7 +516,7 @@ class CircularPlotter:
             ax.plot(theta, [radius]*len(theta), color=color, linewidth=linewidth, alpha=alpha)
 
         # Group labeling
-        if len(dat_processed) > 0:
+        if not dat_processed.empty:
             group_representatives = {}
             for _, event in dat_processed.iterrows():
                 group_id = event['group']
@@ -595,7 +595,7 @@ class CircularPlotter:
         def draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width, 
                                 events, min_val, max_val, label, color_func, label_color, offset_x=0, is_bl=False):
             """Draw a single gradient legend bar with labels"""
-            if len(events) == 0:
+            if events.empty:
                 return
             
             n_steps = 100
@@ -642,7 +642,7 @@ class CircularPlotter:
         
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
             bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
-            if len(bl_events) > 0:
+            if not bl_events.empty:
                 show_bl_bar = True
         
         # Determine number of bars and calculate widths with more spacing

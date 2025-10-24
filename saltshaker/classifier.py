@@ -19,6 +19,28 @@ class EventClassifier:
         self.config = config or ClassificationConfig()
         self.spatial_analyzer = SpatialGroupAnalyzer(genome_length, config)
     
+    def _add_blacklist_events_with_groups(self, events_with_groups, all_events):
+        """
+        Add blacklist-crossing events back with BL group labels
+        
+        Args:
+            events_with_groups: DataFrame with already-grouped non-blacklist events
+            all_events: Original DataFrame with 'blacklist_crossing' column
+            
+        Returns:
+            Combined DataFrame with blacklist events labeled BL1, BL2, etc.
+        """
+        blacklist_events = all_events[all_events['blacklist_crossing'] == True].copy()
+        
+        if len(blacklist_events) == 0:
+            return events_with_groups
+        
+        # Assign BL group IDs
+        for idx, (_, event) in enumerate(blacklist_events.iterrows()):
+            blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
+        
+        return pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+    
     def classify(self, events: pd.DataFrame, blacklist_regions=None):
         """
         Classify events as Single or Multiple pattern
@@ -67,11 +89,9 @@ class EventClassifier:
                     'subtype': "All events in blacklist regions"
                 }
                 
-                # Assign BL groups to all events for VCF/plotting
-                events_with_groups = events.copy()
-                # blacklist_crossing already set to True above
-                for idx, (_, event) in enumerate(events_with_groups.iterrows()):
-                    events_with_groups.loc[event.name, 'group'] = f'BL{idx+1}'
+                # Assign BL groups to all events for VCF/plotting using helper
+                events_with_groups = pd.DataFrame()  # Start empty
+                events_with_groups = self._add_blacklist_events_with_groups(events_with_groups, events)
                 
                 return classification, reason, criteria, events_with_groups
         else:
@@ -119,14 +139,9 @@ class EventClassifier:
             if len(events_with_groups) > 0:
                 events_with_groups['group'] = 'G1'
             
-            # Add blacklist events back for visualization/output (using pre-marked column)
+            # Add blacklist events back using helper method
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events['blacklist_crossing'] == True].copy()
-                
-                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
-                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
-                
-                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+                events_with_groups = self._add_blacklist_events_with_groups(events_with_groups, events)
             
             return classification, reason, criteria, events_with_groups
         
@@ -152,14 +167,9 @@ class EventClassifier:
             events_with_groups = clean_events.copy()
             events_with_groups['group'] = 'G1'
             
-            # Add blacklist events back for visualization/output (using pre-marked column)
+            # Add blacklist events back using helper method
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events['blacklist_crossing'] == True].copy()
-                
-                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
-                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
-                
-                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+                events_with_groups = self._add_blacklist_events_with_groups(events_with_groups, events)
             
             return classification, reason, criteria, events_with_groups
         
@@ -284,13 +294,8 @@ class EventClassifier:
                 else:
                     criteria['subtype'] = "Multiple single-type events"
             
-            # Add blacklist events back for visualization (using pre-marked column)
+            # Add blacklist events back using helper method
             if blacklist_regions and blacklist_filtered > 0:
-                blacklist_events = events[events['blacklist_crossing'] == True].copy()
-                
-                for idx, (_, event) in enumerate(blacklist_events.iterrows()):
-                    blacklist_events.loc[event.name, 'group'] = f'BL{idx+1}'
-                
-                events_with_groups = pd.concat([events_with_groups, blacklist_events], ignore_index=True)
+                events_with_groups = self._add_blacklist_events_with_groups(events_with_groups, events)
             
             return classification, reason, criteria, events_with_groups

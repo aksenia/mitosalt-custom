@@ -58,7 +58,7 @@ class SpatialGroupAnalyzer:
         if min_group_size is None:
             min_group_size = self.config.MIN_CLUSTER_SIZE
         
-        if len(events_df) == 0:
+        if events_df.empty:
             return self._empty_grouping_result(events_df)
 
         logger.debug(f"Spatial Grouping: {len(events_df)} events, radius={radius}bp, min_size={min_group_size}")
@@ -71,8 +71,8 @@ class SpatialGroupAnalyzer:
         logger.debug(f"{len(del_events)} deletions, {len(dup_events)} duplications")
         
         # Group each type separately
-        del_groups = self._group_events_by_type(del_events, radius, 'del') if len(del_events) > 0 else []
-        dup_groups = self._group_events_by_type(dup_events, radius, 'dup') if len(dup_events) > 0 else []
+        del_groups = self._group_events_by_type(del_events, radius, 'del') if not del_events.empty else []
+        dup_groups = self._group_events_by_type(dup_events, radius, 'dup') if not dup_events.empty else []
         
         # Combine and assign global group IDs
         all_groups = del_groups + dup_groups
@@ -120,7 +120,7 @@ class SpatialGroupAnalyzer:
 
     def _group_events_by_type(self, events, radius, event_type):
         """Group events of same type using circular distance"""
-        if len(events) == 0:
+        if events.empty:
             return []
         
         groups = []

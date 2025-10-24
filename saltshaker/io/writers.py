@@ -37,7 +37,7 @@ class TSVWriter:
             output_file: Path to output TSV file
             blacklist_regions: List of blacklist regions for flagging
         """
-        if len(events) == 0:
+        if events.empty:
             logger.warning("No events to save")
             return
         
@@ -209,7 +209,7 @@ class SummaryWriter:
             classification, reason, criteria, events_with_groups = classification_result
         else:
             # Fallback if not provided
-            if len(events) > 0:
+            if not events.empty:
                 classifier = EventClassifier(self.genome_length, self.config)
                 classification, reason, criteria, events_with_groups = classifier.classify(events, blacklist_regions)
             else:
@@ -218,12 +218,12 @@ class SummaryWriter:
                 events_with_groups = pd.DataFrame()
         
         # Count events by type
-        del_count = (events['final_event'] == 'del').sum() if len(events) > 0 else 0
-        dup_count = (events['final_event'] == 'dup').sum() if len(events) > 0 else 0
-        dloop_count = (events['dloop'] == 'yes').sum() if len(events) > 0 else 0
+        del_count = (events['final_event'] == 'del').sum() if not events.empty else 0
+        dup_count = (events['final_event'] == 'dup').sum() if not events.empty else 0
+        dloop_count = (events['dloop'] == 'yes').sum() if not events.empty else 0
         
         # Calculate comprehensive statistics
-        if len(events) > 0:
+        if not events.empty:
             size_stats = {
                 'min': events['delsize'].min(),
                 'max': events['delsize'].max(),
@@ -305,7 +305,7 @@ class SummaryWriter:
             # Heteroplasmy-based analysis (KEY BIOLOGICAL METRIC)
             f.write("Heteroplasmy distribution (literature-based thresholds):\n")
             f.write("-" * 55 + "\n")
-            if len(events) > 0:
+            if not events.empty:
                 f.write(f"High heteroplasmy events (≥{cfg.HIGH_HET_THRESHOLD:.0f}%): {criteria.get('high_het_count', 0)}\n")
                 f.write(f"Low heteroplasmy events (<{cfg.NOISE_THRESHOLD:.0f}%): {criteria.get('low_het_count', 0)}\n")
                 f.write(f"Maximum heteroplasmy: {criteria.get('max_heteroplasmy', 0):.3f}%\n")
@@ -325,7 +325,7 @@ class SummaryWriter:
             # Basic genomic metrics (for reference)
             f.write("Basic metrics:\n")
             f.write("-" * 15 + "\n")
-            if len(events) > 0:
+            if not events.empty:
                 f.write(f"Position range spanned: {criteria.get('position_range', 0):.0f} bp\n")
                 f.write(f"Size coefficient of variation: {criteria.get('size_coefficient_variation', 0):.2f}\n")
             else:
@@ -339,7 +339,7 @@ class SummaryWriter:
             f.write(f"Max size: {size_stats['max']:.0f}\n")
             f.write(f"Mean size: {size_stats['mean']:.1f}\n")
             f.write(f"Median size: {size_stats['median']:.1f}\n")
-            if len(events) > 0:
+            if not events.empty:
                 f.write(f"Size coefficient of variation: {criteria.get('size_coefficient_variation', 0):.2f}\n")
             f.write("\n")
             

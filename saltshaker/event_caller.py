@@ -25,6 +25,21 @@ class EventCaller:
     based on overlap with heavy and light strand replication origins.
     """
     
+    @staticmethod
+    def _parse_comma_separated_median(x):
+        """Calculate median from comma-separated integer string"""
+        return np.median([int(i) for i in str(x).split(',')])
+    
+    @staticmethod
+    def _parse_comma_separated_min(x):
+        """Calculate minimum from comma-separated integer string"""
+        return min([int(i) for i in str(x).split(',')])
+    
+    @staticmethod
+    def _parse_comma_separated_max(x):
+        """Calculate maximum from comma-separated integer string"""
+        return max([int(i) for i in str(x).split(',')])
+    
     def __init__(self, genome_length, ori_h, ori_l, heteroplasmy_limit=0.01, flank_size=15):
         """
         Initialize EventCaller
@@ -90,21 +105,12 @@ class EventCaller:
         logger.info(f"Loaded {len(clusters)} clusters")
         
         # Calculate medians and ranges
-        def calculate_median(x):
-            return np.median([int(i) for i in str(x).split(',')])
-        
-        def calculate_min(x):
-            return min([int(i) for i in str(x).split(',')])
-            
-        def calculate_max(x):
-            return max([int(i) for i in str(x).split(',')])
-        
-        clusters['del_start_median'] = clusters['del_start'].apply(calculate_median)
-        clusters['del_end_median'] = clusters['del_end'].apply(calculate_median)
-        clusters['del_start_min'] = clusters['del_start'].apply(calculate_min)
-        clusters['del_start_max'] = clusters['del_start'].apply(calculate_max)
-        clusters['del_end_min'] = clusters['del_end'].apply(calculate_min)
-        clusters['del_end_max'] = clusters['del_end'].apply(calculate_max)
+        clusters['del_start_median'] = clusters['del_start'].apply(self._parse_comma_separated_median)
+        clusters['del_end_median'] = clusters['del_end'].apply(self._parse_comma_separated_median)
+        clusters['del_start_min'] = clusters['del_start'].apply(self._parse_comma_separated_min)
+        clusters['del_start_max'] = clusters['del_start'].apply(self._parse_comma_separated_max)
+        clusters['del_end_min'] = clusters['del_end'].apply(self._parse_comma_separated_min)
+        clusters['del_end_max'] = clusters['del_end'].apply(self._parse_comma_separated_max)
         
         # Create range strings (with spaces around dash)
         clusters['del_start_range'] = clusters['del_start_min'].astype(str) + ' - ' + clusters['del_start_max'].astype(str)

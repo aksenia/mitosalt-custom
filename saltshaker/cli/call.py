@@ -107,7 +107,7 @@ def run(args):
     # Call events
     events = event_caller.call_events(args.cluster, args.breakpoint)
     
-    if len(events) == 0:
+    if events.empty:
         logger.warning("No events called")
         return
     
