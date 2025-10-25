@@ -7,13 +7,14 @@ import logging
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 import pandas as pd
 
+# Runtime imports
+from ..visualizer import plot_circular
+from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
+from ..data import DEFAULT_MT_BLACKLIST, DEFAULT_MT_GENES
+
 # Type checking imports
 if TYPE_CHECKING:
     from ..types import BlacklistRegion, GeneAnnotation
-
-# These would be actual imports in the real module
-# from ..visualizer import plot_circular
-# from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,6 @@ def run(args: Namespace) -> None:
                               f"Did you run 'saltshaker classify --prefix {args.prefix}' first?")
     
     # Load events
-    from ..io import read_intermediate  # type: ignore
     events: pd.DataFrame
     genome_length: int
     events, genome_length = read_intermediate(str(input_file))
@@ -103,7 +103,6 @@ def run(args: Namespace) -> None:
     if args.blacklist is not None:
         if args.blacklist == 'default':
             # Use built-in default blacklist
-            from ..data import DEFAULT_MT_BLACKLIST  # type: ignore
             blacklist_file: str = DEFAULT_MT_BLACKLIST
             logger.info("Using default MT blacklist regions")
         else:
@@ -114,8 +113,6 @@ def run(args: Namespace) -> None:
         # Validate file exists
         if not Path(blacklist_file).exists():
             raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
-        
-        from ..io import BlacklistReader  # type: ignore
         blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
         logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
 
@@ -124,7 +121,6 @@ def run(args: Namespace) -> None:
     if args.genes is not None:
         if args.genes == 'default':
             # Use built-in default annotations
-            from ..data import DEFAULT_MT_GENES  # type: ignore
             gene_file: str = DEFAULT_MT_GENES
             logger.info("Using default hg38 MT gene annotations")
         else:
@@ -135,14 +131,11 @@ def run(args: Namespace) -> None:
         # Validate file exists
         if not Path(gene_file).exists():
             raise FileNotFoundError(f"Gene annotation file not found: {gene_file}")
-        
-        from ..io import GeneAnnotationReader  # type: ignore
         gene_annotations = GeneAnnotationReader.load_gene_annotations(gene_file)
         logger.info(f"Loaded {len(gene_annotations)} gene annotations")
 
     # Create plot
     logger.info("Generating plot...")
-    from ..visualizer import plot_circular  # type: ignore
     
     figsize: Tuple[int, int] = tuple(args.figsize)  # type: ignore
     plot_circular(

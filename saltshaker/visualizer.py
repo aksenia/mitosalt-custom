@@ -1,5 +1,5 @@
 """
-Circular Visualizer
+Circular visualizer
 
 Creates circular genome plots for mitochondrial structural alterations.
 """
@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from matplotlib.patches import FancyBboxPatch
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
 from matplotlib.projections.polar import PolarAxes
@@ -766,7 +767,6 @@ class CircularPlotter:
         # LEGENDS IN SEPARATE AREAS OF THE FIGURE                 
         # 1. EVENT COUNT SUMMARY - Unified box with all counts
         # Draw the box first
-        from matplotlib.patches import FancyBboxPatch
         
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
             # Box for 2 lines

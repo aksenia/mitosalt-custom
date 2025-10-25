@@ -7,13 +7,14 @@ from pathlib import Path
 import logging
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 
+# Runtime imports
+from ..event_caller import EventCaller
+from ..io import BlacklistReader, write_tsv, write_intermediate
+from ..data import DEFAULT_MT_BLACKLIST
+
 # Type checking imports (not used at runtime)
 if TYPE_CHECKING:
     from ..types import BlacklistRegion
-
-# These would be actual imports in the real module
-# from ..event_caller import EventCaller
-# from ..io import BlacklistReader, write_tsv, write_intermediate
 
 logger = logging.getLogger(__name__)
 
@@ -93,9 +94,6 @@ def run(args: Namespace) -> None:
     logger.info(f"Output directory: {output_dir}")
     
     # Initialize EventCaller
-    # Note: In real code, EventCaller would be imported from ..event_caller
-    from ..event_caller import EventCaller  # type: ignore
-    
     event_caller = EventCaller(
         genome_length=args.genome_length,
         ori_h=(args.ori_h_start, args.ori_h_end),
@@ -109,7 +107,6 @@ def run(args: Namespace) -> None:
     if args.blacklist is not None:
         if args.blacklist == 'default':
             # Use built-in default blacklist
-            from ..data import DEFAULT_MT_BLACKLIST  # type: ignore
             blacklist_file: str = DEFAULT_MT_BLACKLIST
             logger.info("Using default MT blacklist regions")
         else:
@@ -122,7 +119,6 @@ def run(args: Namespace) -> None:
             raise FileNotFoundError(f"Blacklist file not found: {blacklist_file}")
         
         try:
-            from ..io import BlacklistReader  # type: ignore
             blacklist_regions = BlacklistReader.load_blacklist_regions(blacklist_file)
             logger.info(f"Loaded {len(blacklist_regions)} blacklist regions")
         except Exception as e:
@@ -159,7 +155,6 @@ def run(args: Namespace) -> None:
     events = event_caller.add_flanking_sequences(events, args.reference)
     
     # Write intermediate format (all columns) for downstream processing
-    from ..io import write_intermediate, write_tsv  # type: ignore
     write_intermediate(events, str(intermediate_tsv), args.genome_length)
     
     # Write display TSV (formatted, human-readable)

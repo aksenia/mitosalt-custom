@@ -1,5 +1,5 @@
 """
-Event Caller - Core MitoSAlt Algorithm
+Event caller - core MitoSAlt algorithm
 
 Implements the del/dup classification from Basu et al. PLoS Genetics 2020.
 Direct port of delplot.R logic - must remain functionally identical.
@@ -13,6 +13,7 @@ from pathlib import Path
 from Bio import SeqIO
 import warnings
 import logging
+import traceback
 
 warnings.filterwarnings('ignore')
 
@@ -372,7 +373,6 @@ class EventCaller:
             
         except Exception as e:
             logger.warning(f"Flanking sequence analysis failed: {e}")
-            import traceback
             traceback.print_exc()
             events['seq1'] = 'NA'
             events['seq2'] = 'NA'

@@ -1,5 +1,5 @@
 """
-I/O Writers
+I/O writers
 
 Handles writing of analysis results in various formats.
 """
@@ -13,6 +13,7 @@ import logging
 
 from ..utils import crosses_blacklist
 from ..types import BlacklistRegion, ClassificationType
+from ..config import ClassificationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +212,6 @@ class SummaryWriter:
         Args:
             config: ClassificationConfig instance for threshold reporting
         """
-        from ..config import ClassificationConfig
         self.config = config or ClassificationConfig()
     
     def write(

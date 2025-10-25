@@ -7,6 +7,7 @@ General-purpose utilities used across SaltShaker modules.
 from __future__ import annotations
 from typing import List, Optional, Union
 import pandas as pd
+
 from .types import BlacklistRegion
 
 
