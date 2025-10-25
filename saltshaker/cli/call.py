@@ -9,7 +9,7 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 
 # Type checking imports (not used at runtime)
 if TYPE_CHECKING:
-    from .types import BlacklistRegion
+    from ..types import BlacklistRegion
 
 # These would be actual imports in the real module
 # from ..event_caller import EventCaller
@@ -69,7 +69,7 @@ def add_parser(subparsers: _SubParsersAction) -> ArgumentParser:
     parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
                        help='Enable blacklist regions. Use built-in default if no file specified, or provide custom BED file path')
     
-    return parser
+    return parser  # type: ignore[no-any-return]
 
 
 def run(args: Namespace) -> None:

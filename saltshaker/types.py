@@ -5,8 +5,11 @@ Common types used throughout the package for type checking and documentation.
 """
 
 from __future__ import annotations
-from typing import TypedDict, Literal, List, Dict, Union, Tuple
+from typing import TypedDict, Literal, List, Dict, Union, Tuple, TYPE_CHECKING
 from pathlib import Path
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 # Type aliases
 PathLike = Union[str, Path]

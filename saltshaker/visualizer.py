@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
-from matplotlib.axes import Axes
+from matplotlib.projections.polar import PolarAxes
 from pathlib import Path
 import re
 import logging
@@ -130,7 +130,7 @@ class CircularPlotter:
             current_radius = band_bottom - group_gap
         
         # Pack single-event groups on shared radii  
-        shared_levels = []
+        shared_levels: List[Dict[str, Any]] = []
         for group_id in sorted(single_event_groups, key=self.group_sort_key):
             event_deg = data[data['group'] == group_id].iloc[0]['deg1']
             
@@ -200,7 +200,7 @@ class CircularPlotter:
         
         return multi_event_groups + shared_levels_needed
     
-    def _calculate_dynamic_radius_layout(self, dat_del: pd.DataFrame, dat_dup: pd.DataFrame, base_radius: int = 400, separator_frac: float = 0.15) -> Tuple[pd.DataFrame, pd.DataFrame, float, int]:
+    def _calculate_dynamic_radius_layout(self, dat_del: pd.DataFrame, dat_dup: pd.DataFrame, base_radius: int = 400, separator_frac: float = 0.15) -> Tuple[pd.DataFrame, pd.DataFrame, float, float]:
         """
         Calculate dynamic radius layout with proportional space allocation
         
@@ -257,11 +257,11 @@ class CircularPlotter:
         
         # Assign radii within ranges
         if not inner_data.empty:
-            inner_data = self._assign_radii_by_type(inner_data, base_radius=inner_max, radius_diff=6)
+            inner_data = self._assign_radii_by_type(inner_data, base_radius=int(inner_max), radius_diff=6)
         if not outer_data.empty:
             outer_data = self._assign_radii_by_type(outer_data, base_radius=base_radius, radius_diff=6)
 
-        circle_radius = base_radius + 12  # Circle drawn slightly outside events
+        circle_radius: float = float(base_radius + 12)  # Circle drawn slightly outside events
         
         # Return in correct order
         if outer_type == 'dup':
@@ -586,7 +586,8 @@ class CircularPlotter:
         
         # Create figure
         fig = plt.figure(figsize=figsize)
-        ax = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
+        ax_temp = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
+        ax: PolarAxes = ax_temp  # type: ignore[assignment]
         # Set y-limit to accommodate gene track if present
         max_radius = dynamic_radius + 90 if gene_annotations else dynamic_radius + 30
         ax.set_ylim(0, max_radius)
@@ -602,7 +603,7 @@ class CircularPlotter:
         
         # Draw genome circle (use dynamic radius instead of hardcoded)
         circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
-                            color='gray', transform=ax.transData._b)
+                            color='gray', transform=ax.transData._b)  # type: ignore[attr-defined]
         ax.add_patch(circle)
 
         # Draw gene annotation track (outer ring)
@@ -614,7 +615,7 @@ class CircularPlotter:
             # Draw track background circle
             track_bg = patches.Circle((0, 0), gene_track_outer, fill=False, linewidth=1,
                                      color='lightgray', linestyle='--', alpha=0.5,
-                                     transform=ax.transData._b)
+                                     transform=ax.transData._b)  # type: ignore[attr-defined]
             ax.add_patch(track_bg)
             
             # Draw each gene
@@ -631,7 +632,7 @@ class CircularPlotter:
                 gene_size = gene['end'] - gene['start']
                 if gene_size > 200:  # Only label genes >200bp
                     mid_deg = (start_deg + end_deg) / 2
-                    label_radius = gene_track_outer + 12  # Place just outside the track
+                    label_radius = float(gene_track_outer) + 12.0  # Place just outside the track
                     
                     # Calculate rotation for text to be horizontal and readable
                     # Convert back to degrees for rotation calculation
@@ -655,7 +656,7 @@ class CircularPlotter:
         # Draw separator circle between del and dup radii (always present)
         separator_circle = patches.Circle((0, 0), blacklist_radius + 15, fill=False, linewidth=2, 
                                         color='lightgray', linestyle='--', alpha=0.7,
-                                        transform=ax.transData._b)
+                                        transform=ax.transData._b)  # type: ignore[attr-defined]
         ax.add_patch(separator_circle)
         
         # Add blacklist regions
@@ -729,7 +730,7 @@ class CircularPlotter:
 
         # Group labeling
         if not dat_processed.empty:
-            group_representatives = {}
+            group_representatives: Dict[str, Dict[str, Any]] = {}
             for _, event in dat_processed.iterrows():
                 group_id = event['group']
                 het_val = event['value']
@@ -745,12 +746,12 @@ class CircularPlotter:
             for group_id, info in group_representatives.items():
                 breakpoint_deg_rad = np.radians(info['deg'])
                 breakpoint_radius = info['radius']
-                label_radius = breakpoint_radius + 17
+                label_radius = float(breakpoint_radius) + 17.0
                 
                 label_color = 'blue' if info['event_type'] == 'del' else 'red'
                 
                 ax.plot([breakpoint_deg_rad, breakpoint_deg_rad], 
-                        [breakpoint_radius + 1.5, label_radius - 4], 
+                        [float(breakpoint_radius) + 1.5, label_radius - 4], 
                         color='grey', linewidth=1, alpha=0.7, linestyle='-')
                 
                 ax.plot(breakpoint_deg_rad, breakpoint_radius, 
