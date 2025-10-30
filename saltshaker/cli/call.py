@@ -127,29 +127,10 @@ def run(args: Namespace) -> None:
     
     # Call events
     events = event_caller.call_events(args.cluster, args.breakpoint)
-    
+
     if events.empty:
         logger.warning("No events called")
         return
-    
-    # Calculate final coordinates
-    events['perc'] = events['perc'].round(4)
-    events['del_start_median'] = events['del_start_median'] + 1
-    events['final_event_size'] = np.where(
-        events['final_event'] == 'del',
-        events['delsize'],
-        args.genome_length - events['delsize']
-    )
-    events['final_end'] = np.where(
-        events['final_event'] == 'del',
-        events['del_end_median'],
-        events['del_start_median'] - 1
-    )
-    events['final_start'] = np.where(
-        events['final_event'] == 'del',
-        events['del_start_median'],
-        events['del_end_median'] + 1
-    )
     
     # Add flanking sequences
     events = event_caller.add_flanking_sequences(events, args.reference)

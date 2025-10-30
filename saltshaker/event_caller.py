@@ -6,6 +6,7 @@ Direct port of delplot.R logic - must remain functionally identical.
 """
 
 from __future__ import annotations
+from asyncio import events
 from typing import Tuple, List, Optional
 import pandas as pd
 import numpy as np
@@ -95,7 +96,8 @@ class EventCaller:
         """
         Load cluster/breakpoint data and call events as deletions or duplications
         
-        This implements the R script logic from delplot.R
+        Returns DataFrame with BOTH raw coordinates (pre-swap) and final coordinates (post-swap)
+        for proper unit testing and downstream processing.  
         
         Args:
             cluster_file: Path to MitoSAlt cluster file
@@ -112,6 +114,9 @@ class EventCaller:
         
         # Classify as deletion or duplication (R script lines ~160-240)
         events = self._classify_del_or_dup(events)
+
+        # Calculate final coordinates (R script lines 440-448)
+        events = self._calculate_final_coordinates(events)
         
         return events
     
@@ -148,7 +153,7 @@ class EventCaller:
         clusters['sample'] = sample_name
         
         logger.info(f"Loaded {len(clusters)} clusters")
-        
+
         # Calculate medians and ranges
         clusters['del_start_median'] = clusters['del_start'].apply(self._parse_comma_separated_median)
         clusters['del_end_median'] = clusters['del_end'].apply(self._parse_comma_separated_median)
@@ -326,8 +331,88 @@ class EventCaller:
         del_count: int = int((clusters['final_event'] == 'del').sum())
         dup_count: int = int((clusters['final_event'] == 'dup').sum())
         logger.info(f"Final classification - Deletions: {del_count}, Duplications: {dup_count}")
+
+
+        # PRESERVE raw coordinates before swapping (for visualization/debugging)
+        clusters['del_start_median_raw'] = clusters['del_start_median']
+        clusters['del_end_median_raw'] = clusters['del_end_median']
+        clusters['del_start_range_raw'] = clusters['del_start_range']
+        clusters['del_end_range_raw'] = clusters['del_end_range']
         
+        # Swap coordinates for dloop=='yes' events (R script lines 404-426)
+        # This normalizes coordinates so start < end for all events
+        dloop_mask = clusters['dloop'] == 'yes'
+
+        if dloop_mask.any():
+            # Swap median coordinates
+            clusters.loc[dloop_mask, ['del_start_median', 'del_end_median']] = \
+                clusters.loc[dloop_mask, ['del_end_median', 'del_start_median']].values
+            
+            # Swap ranges - swap start min/max WITH end min/max
+            clusters.loc[dloop_mask, ['del_start_range', 'del_end_range']] = \
+                clusters.loc[dloop_mask, ['del_end_range', 'del_start_range']].values
+            
+            # Also swap the actual comma-separated lists
+            clusters.loc[dloop_mask, ['del_start', 'del_end']] = \
+                clusters.loc[dloop_mask, ['del_end', 'del_start']].values
+            clusters.loc[dloop_mask, ['lfstart', 'lfend']] = \
+                clusters.loc[dloop_mask, ['lfend', 'lfstart']].values
+            
+            logger.info(f"Swapped coordinates for {dloop_mask.sum()} dloop=='yes' events")
+
         return clusters
+
+    def _calculate_final_coordinates(self, events: pd.DataFrame) -> pd.DataFrame:
+            """
+            Calculate final coordinates and event sizes after coordinate swapping
+            
+            Implements R script lines 438-448. Coordinates have already been swapped
+            for dloop=='yes' events in _classify_del_or_dup().
+            
+            Args:
+                events: DataFrame with classified events and swapped coordinates
+                
+            Returns:
+                DataFrame with final_start, final_end, and final_event_size added
+            """
+            # Round heteroplasmy (R script line 438)
+            events['perc'] = events['perc'].round(4)
+            
+            # Add +1 to del_start_median (R script line 441)
+            events['del_start_median'] = events['del_start_median'] + 1
+
+            # Calculate final_event_size (R script line 442)
+            events['final_event_size'] = np.where(
+                events['final_event'] == 'del',
+                events['delsize'],
+                self.genome_length - events['delsize']
+            )
+            
+            # Calculate final_end and final_start (R script lines 443-444)
+            events['final_end'] = np.where(
+                events['final_event'] == 'del',
+                events['del_end_median'],
+                events['del_start_median'] - 1
+            )
+            events['final_start'] = np.where(
+                events['final_event'] == 'del',
+                events['del_start_median'],
+                events['del_end_median'] + 1
+            )
+            
+            # Handle wrap-around (R script lines 446-448)
+            events['del_start_median'] = np.where(
+                events['del_start_median'] == self.genome_length + 1,
+                1,
+                events['del_start_median']
+            )
+            events['final_start'] = np.where(
+                events['final_start'] == self.genome_length + 1,
+                1,
+                events['final_start']
+            )
+
+            return events
     
     def add_flanking_sequences(
         self,
@@ -402,9 +487,9 @@ class EventCaller:
         results: List[dict] = []
         
         for idx, (start, end) in enumerate(zip(starts, ends)):
-            # Convert to 1-based coordinates like R
-            start_1based: int = int(start) + 1
-            end_1based: int = int(end) + 1
+            # Input already adjusted to match R's coordinate system
+            start_1based: int = int(start)
+            end_1based: int = int(end)
                     
             # Extract sequences - R: substr(mt.fa, start-nb, start+nb)
             bp_start_genome: int = max(1, start_1based - flank_size)
@@ -416,11 +501,11 @@ class EventCaller:
             bp1: str = genome_seq[bp1_start_genome-1:bp1_end_genome]
                         
             # Build display strings
-            bp_1: str = genome_seq[max(0, start_1based-flank_size-1):start_1based-1]
+            bp_1: str = genome_seq[max(0, start_1based - flank_size - 1):start_1based]
             bp_2: str = genome_seq[start_1based:min(len(genome_seq), start_1based+flank_size)]
             bp_res: str = f"{bp_1}*{bp_2}"
             
-            bp1_1: str = genome_seq[max(0, end_1based-flank_size-1):end_1based-1]
+            bp1_1: str = genome_seq[max(0, end_1based - flank_size - 1):end_1based]
             bp1_2: str = genome_seq[end_1based:min(len(genome_seq), end_1based+flank_size)]
             bp1_res: str = f"{bp1_1}*{bp1_2}"
             

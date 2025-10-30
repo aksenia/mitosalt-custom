@@ -37,13 +37,13 @@ class TSVWriter:
         blacklist_regions: Optional[List[BlacklistRegion]] = None
     ) -> None:
         """
-        Write events to TSV file with coordinate swapping for output
+        Write events to TSV file
         
-        This handles the R script's coordinate swapping logic for display.
+        Expects events DataFrame from EventCaller with final coordinates already calculated.
         NOTE: Does NOT include 'group' column - that's added by classify step.
         
         Args:
-            events: DataFrame with events (from call step, no groups)
+            events: DataFrame with events (must have final_start, final_end, etc.)
             output_file: Path to output TSV file
             blacklist_regions: List of blacklist regions for flagging
         """
@@ -55,61 +55,6 @@ class TSVWriter:
         
         res = events.copy()
         logger.debug(f"Starting save_results with {len(res)} events")
-        
-        # Coordinate swapping for OUTPUT only (R script logic)
-        for i in res.index:
-            if res.loc[i, 'dloop'] == 'yes':
-                # Swap coordinates for display
-                del_start_median = res.loc[i, 'del_start_median']
-                del_end_median = res.loc[i, 'del_end_median']
-                del_start_range = res.loc[i, 'del_start_range']
-                del_end_range = res.loc[i, 'del_end_range']
-                del_start = res.loc[i, 'del_start']
-                del_end = res.loc[i, 'del_end']
-                lfstart = res.loc[i, 'lfstart']
-                lfend = res.loc[i, 'lfend']
-                
-                res.loc[i, 'del_start_median'] = del_end_median
-                res.loc[i, 'del_end_median'] = del_start_median
-                res.loc[i, 'del_start_range'] = del_end_range
-                res.loc[i, 'del_end_range'] = del_start_range
-                res.loc[i, 'del_start'] = del_end
-                res.loc[i, 'del_end'] = del_start
-                res.loc[i, 'lfstart'] = lfend
-                res.loc[i, 'lfend'] = lfstart
-        
-        # Format exactly like R script
-        res['perc'] = res['perc'].round(4)
-        
-        # Calculate final coordinates exactly like R script
-        res['del_start_median'] = res['del_start_median'] + 1
-        res['final_event_size'] = np.where(
-            res['final_event'] == 'del',
-            res['delsize'],
-            self.genome_length - res['delsize']
-        )
-        res['final_end'] = np.where(
-            res['final_event'] == 'del',
-            res['del_end_median'],
-            res['del_start_median'] - 1
-        )
-        res['final_start'] = np.where(
-            res['final_event'] == 'del',
-            res['del_start_median'],
-            res['del_end_median'] + 1
-        )
-        
-        # Handle wraparound
-        res['del_start_median'] = np.where(
-            res['del_start_median'] == self.genome_length + 1,
-            1,
-            res['del_start_median']
-        )
-        res['final_start'] = np.where(
-            res['final_start'] == self.genome_length + 1,
-            1,
-            res['final_start']
-        )
 
         # Blacklist crossing flag using final coordinates
         res['blacklist_crossing'] = [
@@ -195,12 +140,6 @@ def write_intermediate(events: pd.DataFrame, output_file: str, genome_length: in
         genome_length: Genome length
     """
     IntermediateWriter.write(events, output_file, genome_length)
-
-
-from ..types import BlacklistRegion
-
-logger = logging.getLogger(__name__)
-
 
 class SummaryWriter:
     """Writes analysis summary in human-readable text format"""
