@@ -1,0 +1,1 @@
+"""SaltShaker test suite"""
