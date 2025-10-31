@@ -182,5 +182,8 @@ def write_vcf(
         reference_name: Chromosome/contig name (default: "chrM")
         sample_name: Sample identifier (default: None, extracted from data)
     """
+    # Sort the DataFrame by the variant position column in ascending order
+    events_df_sorted = events_df.sort_values(by='del_start_median', ascending=True)
+
     writer = VCFWriter(reference_name=reference_name, sample_name=sample_name)
-    writer.write(events_df, output_file, genome_length)
+    writer.write(events_df_sorted, output_file, genome_length)

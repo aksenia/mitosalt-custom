@@ -443,8 +443,8 @@ class CircularPlotter:
         blacklist_regions: Optional[List[BlacklistRegion]] = None,
         figsize: Tuple[int, int] = (16, 10),
         direction: Literal['clockwise', 'counterclockwise'] = 'counterclockwise',
-        del_color: Literal['red', 'blue'] = 'red',
-        dup_color: Literal['red', 'blue'] = 'blue',
+        del_color: Literal['red', 'blue'] = 'blue',
+        dup_color: Literal['red', 'blue'] = 'red',
         gene_annotations: Optional[List[GeneAnnotation]] = None,
         scale: Literal['dynamic', 'fixed'] = 'dynamic'
     ) -> None:
