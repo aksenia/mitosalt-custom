@@ -133,7 +133,7 @@ class VCFWriter:
             f"SVTYPE={svtype}",
             f"END={int(event['del_end_median'])}",
             f"SVLEN={int(event['delsize'])}",
-            f"HF={event['perc']/100:.4f}",
+            f"HF={event['perc']:.4f}",
             f"GROUP={event['group']}",
             f"CLUSTER={event.get('cluster', 'NA')}"
         ]
@@ -153,7 +153,7 @@ class VCFWriter:
         # Sample field
         gt: str = "0/1"
         alt_reads: int = int(event.get('nread', 0))
-        ref_reads: int = int(event.get('tread', 0)) - alt_reads
+        ref_reads: int = int(event.get('tread', 0))
         sample_field: str = f"{gt}:{alt_reads},{ref_reads}"
         
         # Combine
