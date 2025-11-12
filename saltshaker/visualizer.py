@@ -1,7 +1,8 @@
 """
-Circular visualizer
+Circular visualizer - SIMPLIFIED VERSION
 
 Creates circular genome plots for mitochondrial structural alterations.
+All legacy code removed - uses only simplified radial layout.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ import logging
 
 from .utils import crosses_blacklist
 from .types import BlacklistRegion, GeneAnnotation
+from .config import PlotConfig
+from .layout import LayoutEngine
 
 logger = logging.getLogger(__name__)
 
@@ -27,475 +30,260 @@ class CircularPlotter:
     """
     Creates circular genome visualizations of mitochondrial events
     
-    Generates publication-quality circular plots showing deletions and 
-    duplications around the mitochondrial genome with spatial grouping.
+    Simplified version with clean radial layout and no legacy code.
     """
     
-    def __init__(self, genome_length: int) -> None:
+    def __init__(self, genome_length: int, config: Optional[PlotConfig] = None) -> None:
         """
         Initialize CircularPlotter
         
         Args:
-            genome_length: Mitochondrial genome length
+            genome_length: Mitochondrial genome length (typically 16569 for human)
+            config: Visual configuration for plot styling. If None, uses default settings.
+        
+        Example:
+            >>> plotter = CircularPlotter(16569)
+            >>> plotter = CircularPlotter(16569, PlotConfig.publication())
         """
         self.genome_length: int = genome_length
+        self.config: PlotConfig = config or PlotConfig()
 
         # Color maps will be set in plot() based on parameters
         self.del_cmap: Optional[LinearSegmentedColormap] = None
         self.dup_cmap: Optional[LinearSegmentedColormap] = None
+        self.layout_engine = LayoutEngine(self.config, genome_length)
 
-    @staticmethod
-    def _normalize_arc(start: float, end: float) -> List[Tuple[float, float]]:
+    def _calculate_local_density(
+        self,
+        event_position: float,
+        all_events: pd.DataFrame,
+        window_degrees: Optional[float] = None
+    ) -> int:
         """
-        Normalize arc coordinates for circular genome
+        Calculate local density of events around a position
         
-        Handles arcs that cross the 0/360 boundary by splitting them
-        into two segments.
+        Used for adaptive line width calculation.
         
         Args:
-            start: Start degree (0-360)
-            end: End degree (0-360)
+            event_position: Angular position in degrees (0-360)
+            all_events: DataFrame with all events (must have 'deg1' column)
+            window_degrees: Angular window size in degrees (default: from config)
             
         Returns:
-            List of arc segments as (start, end) tuples
+            Number of events within the window
         """
-        return [(start, 360), (0, end)] if start > end else [(start, end)]
-    
-    @staticmethod
-    def _events_overlap(event1: Dict[str, Any], event2: Dict[str, Any], min_gap: float = 5) -> bool:
-        """
-        Check if two events overlap on circular genome
+        if window_degrees is None:
+            window_degrees = self.config.visualization.density_window_degrees
         
-        Considers minimum gap between events and handles cases where
-        events cross the 0/360 boundary.
+        half_window = window_degrees / 2
         
-        Args:
-            event1: First event dict with 'deg1' and 'deg2' keys
-            event2: Second event dict with 'deg1' and 'deg2' keys
-            min_gap: Minimum gap in degrees to consider non-overlapping (default: 5)
-            
-        Returns:
-            True if events overlap, False otherwise
-        """
-        start1, end1 = event1['deg1'] % 360, event1['deg2'] % 360
-        start2, end2 = event2['deg1'] % 360, event2['deg2'] % 360
-        
-        arcs1 = CircularPlotter._normalize_arc(start1, end1)
-        arcs2 = CircularPlotter._normalize_arc(start2, end2)
-        
-        for arc1_start, arc1_end in arcs1:
-            for arc2_start, arc2_end in arcs2:
-                if not (arc1_end + min_gap <= arc2_start or arc2_end + min_gap <= arc1_start):
-                    return True
-        return False
-    
-    def _assign_radii_by_type(self, data: pd.DataFrame, base_radius: int = 380, radius_diff: int = 8) -> pd.DataFrame:
-        """
-        Assign radii to events of a single type within their allocated radius range
-        
-        Uses intelligent packing algorithm to minimize overlap:
-        - Multi-event groups get dedicated bands
-        - Single-event groups share radii when non-overlapping
-        - Events within groups avoid overlap through layering
-        
-        Args:
-            data: DataFrame with events (must have 'group', 'deg1', 'deg2' columns)
-            base_radius: Maximum radius for this event type (default: 380)
-            radius_diff: Spacing between radius levels (default: 8)
-            
-        Returns:
-            DataFrame with 'radius' column added
-        """
-        if data.empty:
-            return data
-        
-        data = data.sort_values(['group', 'deg1'], ascending=[True, True]).reset_index(drop=True)
-        data['radius'] = 0
-        
-        unique_groups = data['group'].unique()
-        group_counts = data['group'].value_counts().to_dict()
-        
-        single_event_groups = [g for g in unique_groups if group_counts[g] == 1]
-        multi_event_groups = [g for g in unique_groups if group_counts[g] > 1]
-        
-        group_band_size = 25
-        group_gap = 6
-        current_radius = base_radius
-        assignments = {}
-        
-        # Assign dedicated bands to multi-event groups
-        for group_id in sorted(multi_event_groups, key=self.group_sort_key):
-            band_top = current_radius
-            band_bottom = band_top - group_band_size
-            assignments[group_id] = {'band_top': band_top, 'band_bottom': band_bottom, 'shared': False}
-            current_radius = band_bottom - group_gap
-        
-        # Pack single-event groups on shared radii  
-        shared_levels: List[Dict[str, Any]] = []
-        for group_id in sorted(single_event_groups, key=self.group_sort_key):
-            event_deg = data[data['group'] == group_id].iloc[0]['deg1']
-            
-            # Try to share with existing level
-            placed = False
-            for level in shared_levels:
-                if all(abs(event_deg - deg) >= 90 and abs(event_deg - deg) <= 270 
-                    for deg in level['degrees']):
-                    level['degrees'].append(event_deg)
-                    assignments[group_id] = {'radius': level['radius'], 'shared': True}
-                    placed = True
-                    break
-            
-            if not placed:
-                new_radius = current_radius - group_gap
-                shared_levels.append({'radius': new_radius, 'degrees': [event_deg]})
-                assignments[group_id] = {'radius': new_radius, 'shared': True}
-                current_radius = new_radius - group_gap
-        
-        # Assign actual radii to events
-        for group_id, assignment in assignments.items():
-            group_indices = data[data['group'] == group_id].index.tolist()
-            
-            if assignment['shared']:
-                for idx in group_indices:
-                    data.loc[idx, 'radius'] = max(20, assignment['radius'])  # Add minimum bound to prevent overflow to the boundary
-            else:
-                band_top, band_bottom = assignment['band_top'], assignment['band_bottom']
-                band_bottom = max(20, band_bottom)  # Ensure minimum radius
-                for i, idx in enumerate(group_indices):
-                    test_radius = band_top
-                    while test_radius >= band_bottom:
-                        if not any(data.loc[prev_idx, 'radius'] == test_radius and 
-                                self._events_overlap(data.loc[idx], data.loc[prev_idx])
-                                for prev_idx in group_indices[:i]):
-                            data.loc[idx, 'radius'] = test_radius
-                            break
-                        test_radius -= 5
-                    else:
-                        data.loc[idx, 'radius'] = max(20, band_bottom)  # Add minimum bound
-        
-        return data
-    
-    @staticmethod
-    def _calculate_space_needed(data: pd.DataFrame) -> int:
-        """
-        Calculate space needed for events based on group structure
-        
-        Estimates number of radius levels needed:
-        - Each multi-event group needs its own band
-        - Single events can share levels (4 per level)
-        
-        Args:
-            data: DataFrame with events (must have 'group' column)
-            
-        Returns:
-            Number of radius levels needed
-        """
-        if data.empty:
-            return 0
-        groups = data['group'].unique()
-        group_counts = data['group'].value_counts().to_dict()
-        
-        multi_event_groups = len([g for g in groups if group_counts[g] > 1])
-        single_events = len([g for g in groups if group_counts[g] == 1])
-        shared_levels_needed = max(1, (single_events + 3) // 4)
-        
-        return multi_event_groups + shared_levels_needed
-    
-    def _calculate_dynamic_radius_layout(self, dat_del: pd.DataFrame, dat_dup: pd.DataFrame, base_radius: int = 400, separator_frac: float = 0.15) -> Tuple[pd.DataFrame, pd.DataFrame, float, float]:
-        """
-        Calculate dynamic radius layout with proportional space allocation
-        
-        Allocates inner/outer rings based on which event type needs more space.
-        Larger events (by median size) are placed in the outer ring.
-        Assigns radii to events within their allocated ranges.
-        
-        Args:
-            dat_del: DataFrame with deletion events
-            dat_dup: DataFrame with duplication events
-            base_radius: Total radius available (default: 400)
-            separator_frac: Fraction of radius for separator band (default: 0.15)
-            
-        Returns:
-            Tuple of (dat_del_with_radii, dat_dup_with_radii, blacklist_radius, circle_radius)
-        """
-        del_space_needed = self._calculate_space_needed(dat_del)
-        dup_space_needed = self._calculate_space_needed(dat_dup)
-        
-        total_group_space = del_space_needed + dup_space_needed
-        
-        if total_group_space == 0:
-            return dat_del, dat_dup, base_radius * separator_frac, base_radius
-        
-        available_frac = 1.0 - separator_frac
-        del_frac = (del_space_needed / total_group_space) * available_frac
-        dup_frac = (dup_space_needed / total_group_space) * available_frac
-        
-        # Determine outer vs inner based on MEDIAN SIZE (largest type goes outside)
-        # Keep type separation: all dels in one ring, all dups in another
-        del_median_size = dat_del['delsize'].median() if not dat_del.empty else 0
-        dup_median_size = dat_dup['delsize'].median() if not dat_dup.empty else 0
-
-        if dup_median_size > del_median_size:
-            # Duplications are larger → put ALL dups outside, ALL dels inside
-            outer_frac, inner_frac = dup_frac, del_frac
-            outer_data, inner_data = dat_dup, dat_del
-            outer_type = 'dup'
+        # Handle wraparound at 0/360 boundary
+        if event_position < half_window:
+            # Window crosses 360 -> 0
+            lower_bound = 360 + (event_position - half_window)
+            upper_bound = event_position + half_window
+            in_window = ((all_events['deg1'] >= lower_bound) | 
+                        (all_events['deg1'] <= upper_bound))
+        elif event_position > 360 - half_window:
+            # Window crosses 0 -> 360
+            lower_bound = event_position - half_window
+            upper_bound = (event_position + half_window) - 360
+            in_window = ((all_events['deg1'] >= lower_bound) | 
+                        (all_events['deg1'] <= upper_bound))
         else:
-            # Deletions are larger (or equal) → put ALL dels outside, ALL dups inside
-            outer_frac, inner_frac = del_frac, dup_frac  
-            outer_data, inner_data = dat_del, dat_dup
-            outer_type = 'del'
-
-        logger.debug(f"Layout - {outer_type.upper()} outside (median size: {max(del_median_size, dup_median_size):.0f}bp)")
+            # Normal case - no wraparound
+            lower_bound = event_position - half_window
+            upper_bound = event_position + half_window
+            in_window = ((all_events['deg1'] >= lower_bound) & 
+                        (all_events['deg1'] <= upper_bound))
         
-        # Calculate radius ranges
-        inner_max = base_radius * inner_frac
-        outer_min = base_radius * (inner_frac + separator_frac)
-        blacklist_radius = (inner_max + outer_min) / 2
-        
-        logger.debug(f"Fractions - Inner: {inner_frac:.3f}, Separator: {separator_frac:.3f}, Outer: {outer_frac:.3f}")
-        logger.debug(f"Ranges - Inner: [0-{inner_max:.1f}], Outer: [{outer_min:.1f}-{base_radius}], BL: {blacklist_radius:.1f}")
-        
-        # Assign radii within ranges
-        if not inner_data.empty:
-            inner_data = self._assign_radii_by_type(inner_data, base_radius=int(inner_max), radius_diff=6)
-        if not outer_data.empty:
-            outer_data = self._assign_radii_by_type(outer_data, base_radius=base_radius, radius_diff=6)
-
-        circle_radius: float = float(base_radius + 12)  # Circle drawn slightly outside events
-        
-        # Return in correct order
-        if outer_type == 'dup':
-            return inner_data, outer_data, blacklist_radius, circle_radius
-        else:
-            return outer_data, inner_data, blacklist_radius, circle_radius
+        return in_window.sum()
     
-    @staticmethod
-    def _get_pure_blue_color(het_val: float, min_het: float, max_het: float) -> Tuple[float, float, float]:
+    def _get_adaptive_linewidth(
+        self,
+        event_position: float,
+        all_events: pd.DataFrame
+    ) -> float:
         """
-        Generate pure blue color based on heteroplasmy value
-        
-        Creates gradient from light blue (low heteroplasmy) to pure blue (high).
+        Calculate adaptive line width based on local density
         
         Args:
-            het_val: Heteroplasmy value
-            min_het: Minimum heteroplasmy in dataset
-            max_het: Maximum heteroplasmy in dataset
-            
-        Returns:
-            RGB tuple (red, green, blue) with values 0-1
-        """
-        if max_het > min_het:
-            norm = (het_val - min_het) / (max_het - min_het)
-        else:
-            norm = 0.5
-        blue = 1.0
-        red = 0.8 * (1 - norm)
-        green = 0.9 * (1 - norm)
-        return (red, green, blue)
-    
-    @staticmethod
-    def _get_pure_red_color(het_val: float, min_het: float, max_het: float) -> Tuple[float, float, float]:
-        """
-        Generate pure red color based on heteroplasmy value
+            event_position: Angular position of the event
+            all_events: DataFrame with all events
         
-        Creates gradient from light red (low heteroplasmy) to pure red (high).
+        Returns:
+            Line width in pixels
+        """
+        # Use FIXED line width for consistent appearance - same as outer red arcs
+        # The layout algorithm will handle spacing intelligently
+        return 2.5  # Fixed thickness for all arcs
+    
+    def _compress_gradient_fixed_scale(self, value: float, vmin: float, vmax: float) -> float:
+        """
+        Compress gradient for fixed scale (0-100%) to optimize visibility
+        
+        Maps values as follows:
+        - 0-50%: Uses 0-85% of gradient (good visibility)
+        - 50-100%: Uses 85-100% of gradient (compressed dark shades)
+        
+        This gives better visibility for the common 0-50% range while
+        still allowing theoretical 50-100% values.
         
         Args:
-            het_val: Heteroplasmy value
-            min_het: Minimum heteroplasmy in dataset
-            max_het: Maximum heteroplasmy in dataset
+            value: Heteroplasmy value
+            vmin: Minimum value (should be 0 for fixed scale)
+            vmax: Maximum value (should be 100 for fixed scale)
             
         Returns:
-            RGB tuple (red, green, blue) with values 0-1
+            Compressed normalized value (0-1) for colormap lookup
         """
-        if max_het > min_het:
-            norm = (het_val - min_het) / (max_het - min_het)
+        if vmax <= vmin:
+            return 0.5
+        
+        # First normalize to 0-1 based on full range
+        norm = (value - vmin) / (vmax - vmin)
+        
+        # For fixed scale (0-100%), compress the gradient:
+        # 0-50% (0-0.5 normalized) → 0-0.85 of gradient
+        # 50-100% (0.5-1.0 normalized) → 0.85-1.0 of gradient
+        if norm <= 0.5:
+            # Map 0-0.5 to 0-0.85 (linear)
+            compressed = norm * 1.7  # 0.5 * 1.7 = 0.85
         else:
-            norm = 0.5
-        red = 1.0
-        green = 0.8 * (1 - norm)
-        blue = 0.85 * (1 - norm)
-        return (red, green, blue)
+            # Map 0.5-1.0 to 0.85-1.0 (compressed)
+            compressed = 0.85 + (norm - 0.5) * 0.3  # Remaining 0.15 for top half
+        
+        return min(1.0, max(0.0, compressed))
     
-    @staticmethod
-    def _get_lime_green_color(het_val: float, min_het: float, max_het: float) -> Tuple[float, float, float]:
+    def group_sort_key(self, group: str) -> Tuple:
         """
-        Generate lime-green gradient color for blacklist-crossing events
+        Generate sort key for group names
         
-        Creates gradient from light lime-green (low heteroplasmy) to dark green (high).
-        
-        Args:
-            het_val: Heteroplasmy value
-            min_het: Minimum heteroplasmy in dataset
-            max_het: Maximum heteroplasmy in dataset
-            
-        Returns:
-            RGB tuple (red, green, blue) with values 0-1
+        Ensures consistent ordering: G1, G2, ..., G10, G11, ..., BL1, BL2, ...
         """
-        if max_het > min_het:
-            norm = (het_val - min_het) / (max_het - min_het)
-        else:
-            norm = 0.5
-        # Light lime-green (0.6, 1.0, 0.4) to dark green (0.0, 0.5, 0.0)
-        red = 0.6 * (1 - norm)
-        green = 1.0 - 0.5 * norm
-        blue = 0.4 * (1 - norm)
-        return (red, green, blue)
+        match = re.match(r'^([A-Z]+)(\d+)$', group)
+        if match:
+            prefix, number = match.groups()
+            return (prefix, int(number))
+        return (group, 0)
     
-    @staticmethod
-    def _get_continuous_alpha(het_val: float, min_het: float, max_het: float) -> float:
-        """
-        Calculate alpha (transparency) value based on heteroplasmy
-        
-        Higher heteroplasmy = more opaque. Range: 0.75 to 0.95
-        
-        Args:
-            het_val: Heteroplasmy value
-            min_het: Minimum heteroplasmy in dataset
-            max_het: Maximum heteroplasmy in dataset
-            
-        Returns:
-            Alpha value between 0.75 and 0.95
-        """
-        if max_het > min_het:
-            norm = (het_val - min_het) / (max_het - min_het)
-        else:
-            norm = 0.5
-        return 0.75 + 0.2 * norm
-    
-    @staticmethod
-    def _draw_gradient_legend(
-        fig: Figure,
-        legend_x: float,
-        legend_y: float,
-        legend_height: float,
-        bar_width: float, 
+    def calculate_pattern(
+        self,
         events: pd.DataFrame,
-        min_val: float,
-        max_val: float,
-        label: str,
-        color_func: Callable[[float, float, float], Tuple[float, float, float]],
-        label_color: Union[str, Tuple[float, float, float]],
-        offset_x: float = 0,
-        is_bl: bool = False
-    ) -> None:
+        classification_config: Optional[Any] = None
+    ) -> Literal['Single', 'Multiple', 'Unknown']:
         """
-        Draw a single gradient legend bar with labels
-        
-        Creates a vertical gradient bar showing the heteroplasmy scale
-        for a specific event category (Del, Dup, or BL).
+        Calculate Single vs Multiple pattern classification
         
         Args:
-            fig: Matplotlib figure object
-            legend_x: X position in figure coordinates
-            legend_y: Y position (center) in figure coordinates
-            legend_height: Height of legend bar
-            bar_width: Width of legend bar
-            events: DataFrame with events to display
-            min_val: Minimum value for gradient
-            max_val: Maximum value for gradient
-            label: Label text (e.g., "Del", "Dup", "BL")
-            color_func: Function to generate colors: func(het_val, min_val, max_val) -> RGB
-            label_color: Color for label text
-            offset_x: Horizontal offset for multiple bars (default: 0)
-            is_bl: Whether this is a blacklist bar (affects decimal places, default: False)
+            events: DataFrame with events (must have 'group' column)
+            classification_config: Optional classification config
+        
+        Returns:
+            'Single', 'Multiple', or 'Unknown'
         """
-        if events.empty:
-            return
+        if 'group' not in events.columns:
+            return 'Unknown'
         
-        n_steps = 100
-        step_height = legend_height / n_steps
+        # Get configuration thresholds
+        if classification_config is None:
+            from .config import ClassificationConfig
+            classification_config = ClassificationConfig()
         
-        # Draw gradient rectangles
-        for i in range(n_steps):
-            norm = i / (n_steps - 1)
-            het_val = min_val + norm * (max_val - min_val) if max_val > min_val else min_val
-            y_pos = legend_y - legend_height/2 + i * step_height
-            
-            color = color_func(het_val, min_val, max_val)
-            alpha = CircularPlotter._get_continuous_alpha(het_val, min_val, max_val)
-            
-            rect = plt.Rectangle(
-                (legend_x + offset_x, y_pos), bar_width, step_height,
-                facecolor=color, alpha=alpha, edgecolor='none',
-                transform=fig.transFigure
-            )
-            fig.patches.append(rect)
+        # Count events by group
+        group_counts = events['group'].value_counts()
+        n_groups = len(group_counts)
+        n_events = len(events)
         
-        # Label at top
-        label_x = legend_x + offset_x + bar_width / 2
-        fig.text(label_x, legend_y + legend_height/2 + 0.01, label, 
-                fontsize=10, ha='center', weight='bold', color=label_color)
+        # Multiple pattern: >10 events OR multiple groups with no dominant group
+        if n_events > classification_config.MULTIPLE_EVENT_THRESHOLD:
+            return 'Multiple'
         
-        # Min/max values - all on the right side, closer to bars
-        # Use 2 decimal places for BL values, 1 for Del/Dup
-        decimal_places = 2 if is_bl else 1
-        for pos, val in [(1, max_val), (0, min_val)]:
-            y_pos = legend_y - legend_height/2 + pos * legend_height
-            fig.text(legend_x + offset_x + bar_width + 0.005, y_pos, f"{val:.{decimal_places}f}", 
-                    fontsize=9, va='center', ha='left', color=label_color)
-
+        # Single pattern: one dominant group with ≥50% of events
+        if n_groups == 1:
+            return 'Single'
+        
+        largest_group_fraction = group_counts.iloc[0] / n_events
+        if largest_group_fraction >= classification_config.DOMINANT_GROUP_FRACTION:
+            return 'Single'
+        
+        return 'Multiple'
+    
     def plot(
         self,
         events: pd.DataFrame,
-        output_file: str,
+        output_file: str = 'mitochondrial_plot.png',
+        title: Optional[str] = None,
+        metadata_text: Optional[str] = None,
+        scale: Literal['dynamic', 'fixed'] = 'dynamic',
         blacklist_regions: Optional[List[BlacklistRegion]] = None,
-        figsize: Tuple[int, int] = (16, 10),
-        direction: Literal['clockwise', 'counterclockwise'] = 'counterclockwise',
-        del_color: Literal['red', 'blue'] = 'blue',
-        dup_color: Literal['red', 'blue'] = 'red',
         gene_annotations: Optional[List[GeneAnnotation]] = None,
-        scale: Literal['dynamic', 'fixed'] = 'dynamic'
-    ) -> None:
+        del_color: Literal['red', 'blue'] = 'red',
+        dup_color: Literal['blue', 'red'] = 'blue',
+        figsize: Optional[Tuple[float, float]] = None,
+        direction: Literal['clockwise', 'counterclockwise'] = 'counterclockwise',
+        show: bool = False
+    ) -> Figure:
         """
-        Create circular plot of mitochondrial events
+        Generate circular mitochondrial plot
         
         Args:
-            events: DataFrame with events (must have group column)
-            output_file: Path to output PNG file
-            blacklist_regions: List of blacklist region dicts (optional)
-            figsize: Figure size tuple (default: (16, 10))
-            direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
-            del_color: Color scheme for deletions - 'red' or 'blue' (default: 'blue')
-            dup_color: Color scheme for duplications - 'red' or 'blue' (default: 'red')
-            gene_annotations: List of gene annotation dicts from BED file (optional)
-            scale: Heteroplasmy color scale - 'dynamic' (min-max per category) or 'fixed' (0-100%) (default: 'dynamic')
-
+            events: DataFrame with columns:
+                - del_start_median, del_end_median: Event boundaries (bp)
+                - perc: Heteroplasmy percentage (0-100)
+                - final_event: Event type ('del' or 'dup')
+                - delsize: Event size (bp)
+                - dloop: D-loop involvement ('yes'/'no')
+                - group: Optional group identifier
+            output_file: Path to save figure
+            title: Plot title (auto-generated if None)
+            metadata_text: Additional metadata to display
+            scale: 'dynamic' (scale to data range) or 'fixed' (0-100%)
+            blacklist_regions: Optional list of blacklist regions
+            gene_annotations: Optional list of gene annotations
+            del_color: Color for deletions ('red' or 'blue')
+            dup_color: Color for duplications ('red' or 'blue')
+            figsize: Figure size in inches (width, height)
+            direction: Plot direction ('clockwise' or 'counterclockwise')
+            show: Whether to display the plot
+        
+        Returns:
+            matplotlib Figure object
+        
+        Example:
+            >>> events_df = pd.read_csv('events.csv')
+            >>> fig = plotter.plot(events_df, 'output.png', scale='dynamic')
         """
+        if del_color not in ['red', 'blue'] or dup_color not in ['red', 'blue']:
+            raise ValueError("Colors must be 'red' or 'blue'")
         
-        if events.empty:
-            logger.warning("No events to plot")
-            return
-        
-        # Validate scale parameter
         if scale not in ['dynamic', 'fixed']:
             raise ValueError(f"Invalid scale: {scale}. Use 'dynamic' or 'fixed'")
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
-        # Set color maps based on parameters
+        # Set color maps based on parameters - with stronger gradients
         if del_color == 'red':
+            # From very light red to dark red (no pink)
             self.del_cmap = LinearSegmentedColormap.from_list(
-                'deletions', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
+                'deletions', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
             del_label_color = 'red'
-        elif del_color == 'blue':
-            self.del_cmap = LinearSegmentedColormap.from_list(
-                'deletions', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
-            del_label_color = 'blue'
         else:
-            raise ValueError(f"Invalid del_color: {del_color}. Use 'red' or 'blue'")
+            # From very pale blue to dark blue
+            self.del_cmap = LinearSegmentedColormap.from_list(
+                'deletions', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
+            del_label_color = 'blue'
 
         if dup_color == 'red':
+            # From very light red to dark red (no pink)
             self.dup_cmap = LinearSegmentedColormap.from_list(
-                'duplications', ['#FF6347', '#DC143C', '#B22222', '#8B0000', '#800000'])
+                'duplications', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
             dup_label_color = 'red'
-        elif dup_color == 'blue':
-            self.dup_cmap = LinearSegmentedColormap.from_list(
-                'duplications', ['#4169E1', '#1E90FF', '#0000CD', '#000080', '#191970'])
-            dup_label_color = 'blue'
         else:
-            raise ValueError(f"Invalid dup_color: {dup_color}. Use 'red' or 'blue'")
+            # From very pale blue to dark blue
+            self.dup_cmap = LinearSegmentedColormap.from_list(
+                'duplications', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
+            dup_label_color = 'blue'
         
         # Create data structure for plotting
         dat = pd.DataFrame({
@@ -511,12 +299,11 @@ class CircularPlotter:
         
         # Order events by group for better visualization
         if 'group' in events.columns:
-            # Add temporary sort key column
             dat['_sort_key'] = dat['group'].apply(lambda g: self.group_sort_key(g))
             dat = dat.sort_values(['_sort_key', 'value'], ascending=[True, False]).reset_index(drop=True)
             dat = dat.drop(columns=['_sort_key'])
         
-        # Enhanced blacklist crossing detection      
+        # Detect blacklist crossing
         dat['blacklist_crossing'] = False
         if blacklist_regions:
             for idx, row in dat.iterrows():
@@ -529,14 +316,30 @@ class CircularPlotter:
         bl_dup_count = ((dat['final_event'] == 'dup') & dat['blacklist_crossing']).sum()
         
         # Add degrees
-        dat['deg1'] = 358 * dat['start'] / self.genome_length
-        dat['deg2'] = 358 * dat['end'] / self.genome_length
+        dat['deg1'] = self.config.degrees_per_genome * dat['start'] / self.genome_length
+        dat['deg2'] = self.config.degrees_per_genome * dat['end'] / self.genome_length
+        
+        # Normalize angles into [0,360)
+        for col in ('deg1', 'deg2'):
+            dat[col] = pd.to_numeric(dat[col], errors='coerce')
+            if dat[col].isna().any():
+                logger.warning("%d invalid %s values", int(dat[col].isna().sum()), col)
+            mask = dat[col].notna()
+            if mask.any():
+                dat.loc[mask, col] = (dat.loc[mask, col] % 360.0).astype(float)
+        
+        # CRITICAL FIX: For duplications that DON'T cross D-loop, swap coordinates
+        # because the arc represents the PRESERVED region, not the duplicated region
+        # This matches the original R script behavior
         
         dup_no_dloop_mask = (dat['final_event'] == 'dup') & (dat['dloop'] == 'no')
         if dup_no_dloop_mask.any():
-            dat.loc[dup_no_dloop_mask, 'deg1'] = 360 + dat.loc[dup_no_dloop_mask, 'deg1']
+            # Swap deg1 and deg2 for these events
+            temp = dat.loc[dup_no_dloop_mask, 'deg1'].copy()
+            dat.loc[dup_no_dloop_mask, 'deg1'] = dat.loc[dup_no_dloop_mask, 'deg2']
+            dat.loc[dup_no_dloop_mask, 'deg2'] = temp
+            logger.info(f"Swapped coordinates for {dup_no_dloop_mask.sum()} non-dloop duplications")
         
-        # MAIN PROCESSING
         # Separate data by type
         dat_del = dat[dat['final_event'] == 'del'].copy()
         dat_dup = dat[dat['final_event'] == 'dup'].copy()
@@ -545,403 +348,777 @@ class CircularPlotter:
         if not dat_dup.empty:
             dat_dup['delsize'] = self.genome_length - dat_dup['delsize']
 
-        # Calculate dynamic layout (includes radius assignment)
-        dat_del, dat_dup, blacklist_radius, dynamic_radius = self._calculate_dynamic_radius_layout(
-            dat_del, dat_dup, base_radius=400)
+        # Calculate layout using simplified engine 
+        logger.info(f"Using simplified layout engine for {len(dat_del)} dels, {len(dat_dup)} dups")
 
-        # Combine for processing
-        dat_processed = pd.concat([dat_del, dat_dup], ignore_index=True) if not dat_dup.empty else dat_del
+        layout_result = self.layout_engine.calculate_layout(
+            dat_del,
+            dat_dup,
+            self.config.layout.total_radius
+        )
+
+        # Extract events with assigned radii from layout engine
+        # Note: Margin enforcement is now handled in engine.py, not here
+        all_events_with_radius = layout_result.events
         
-        # Calculate color scales based on scale parameter
+        dat_del = all_events_with_radius[all_events_with_radius['final_event'] == 'del'].copy()
+        dat_dup = all_events_with_radius[all_events_with_radius['final_event'] == 'dup'].copy()
+
+        logger.info(f"Layout complete: {len(dat_del)} dels, {len(dat_dup)} dups")
+        logger.info(f"  Del radius range: {layout_result.del_radius_range}")
+        logger.info(f"  Dup radius range: {layout_result.dup_radius_range}")
+        logger.info(f"  Blacklist radius: {layout_result.blacklist_radius:.1f}")
+
+        dat_processed = pd.concat([dat_del, dat_dup], ignore_index=False)
+        
+        # Calculate color scales
         del_events = dat_processed[dat_processed['final_event'] == 'del']
         dup_events = dat_processed[dat_processed['final_event'] == 'dup']
         
         if scale == 'fixed':
-            # Fixed scale: 0-100% for all categories
-            del_min = 0.0
-            del_max = 100.0
-            dup_min = 0.0
-            dup_max = 100.0
-            bl_min = 0.0
-            bl_max = 100.0
-            logger.info("Using fixed heteroplasmy scale: 0-100%")
+            # Fixed scale: 0-100% range but with optimized gradient
+            # 0-50% uses full color range for better visibility
+            # 50-100% uses compressed dark shades (rare but theoretically possible)
+            del_min, del_max = 0.0, 100.0
+            dup_min, dup_max = 0.0, 100.0
+            bl_min, bl_max = 0.0, 100.0
+            logger.info("Using fixed heteroplasmy scale: 0-100% (gradient optimized for 0-50%)")
+            
+            # Store actual max values for legend indicator
+            del_actual_max = del_events['value'].max() if not del_events.empty else 0
+            dup_actual_max = dup_events['value'].max() if not dup_events.empty else 0
+            if blacklist_regions:
+                bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
+                bl_actual_max = bl_events_temp['value'].max() if not bl_events_temp.empty else 0
+            else:
+                bl_actual_max = 0
         else:  # dynamic
             # Dynamic scale: min-max within each category
             del_max = del_events['value'].max() if not del_events.empty else 0
             del_min = del_events['value'].min() if not del_events.empty else 0
             dup_max = dup_events['value'].max() if not dup_events.empty else 0  
             dup_min = dup_events['value'].min() if not dup_events.empty else 0
-            # Calculate BL min/max for gradient coloring (needed for event plotting)
+            
+            # Calculate BL min/max for gradient coloring
             if blacklist_regions:
-                bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
-                if not bl_events_temp.empty:
-                    bl_min = bl_events_temp['value'].min()
-                    bl_max = bl_events_temp['value'].max()
+                bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
+                if not bl_events.empty:
+                    bl_min = bl_events['value'].min()
+                    bl_max = bl_events['value'].max()
                 else:
-                    bl_min = 0.0
-                    bl_max = 100.0
+                    bl_min, bl_max = 0, 0
             else:
-                bl_min = 0.0
-                bl_max = 100.0
-            logger.info(f"Using dynamic heteroplasmy scale - Del: {del_min:.1f}-{del_max:.1f}%, Dup: {dup_min:.1f}-{dup_max:.1f}%")
-        
-        # Create figure
-        fig = plt.figure(figsize=figsize)
-        ax_temp = fig.add_subplot(111, projection='polar', position=[0.15, 0.05, 0.7, 0.88])
-        ax: PolarAxes = ax_temp  # type: ignore[assignment]
-        # Set y-limit to accommodate gene track if present
-        max_radius = dynamic_radius + 90 if gene_annotations else dynamic_radius + 30
-        ax.set_ylim(0, max_radius)
-        ax.set_theta_zero_location('N')
+                bl_min, bl_max = 0, 0
+            
+            # For dynamic scale, actual max = scale max
+            del_actual_max = del_max
+            dup_actual_max = dup_max
+            bl_actual_max = bl_max
+            
+            logger.info(f"Dynamic scale - Del: {del_min:.1f}-{del_max:.1f}%, "
+                       f"Dup: {dup_min:.1f}-{dup_max:.1f}%")
 
+        # Create figure
+        if figsize is None:
+            figsize = (self.config.figure_size, self.config.figure_size)
+        
+        fig = plt.figure(figsize=figsize)
+        ax = fig.add_subplot(111, projection='polar')
+        ax.set_theta_zero_location('N')
+        
         # Set direction based on parameter
-        if direction == 'counterclockwise':
-            ax.set_theta_direction(1)  # Counterclockwise
-        elif direction == 'clockwise':
+        if direction == 'clockwise':
             ax.set_theta_direction(-1)  # Clockwise
         else:
-            raise ValueError(f"Invalid direction: {direction}. Use 'clockwise' or 'counterclockwise'")
+            ax.set_theta_direction(1)   # Counterclockwise (default)
         
-        # Draw genome circle (use dynamic radius instead of hardcoded)
-        circle = patches.Circle((0, 0), dynamic_radius, fill=False, linewidth=3,
-                            color='gray', transform=ax.transData._b)  # type: ignore[attr-defined]
-        ax.add_patch(circle)
-
-        # Draw gene annotation track (outer ring)
+        # Calculate radius info
+        blacklist_radius = layout_result.blacklist_radius
+        genome_radius = self.config.layout.total_radius  # Genome circle at full boundary
+        
+        # Add offset for gene track and labels
+        gene_track_offset = 35  # Space for gene track (15px track + margins)
+        label_offset = 20       # Space for coordinate labels
+        circle_offset = self.config.circle_offset + gene_track_offset + label_offset
+        max_plot_radius = genome_radius + circle_offset
+        
+        # Draw genome circle at full radius boundary
+        theta_genome = np.linspace(0, self.config.degrees_per_genome * np.pi / 180, 
+                                  self.config.arc_resolution)
+        radius_genome = [genome_radius] * len(theta_genome)
+        ax.plot(theta_genome, radius_genome, 'k-', 
+               linewidth=self.config.genome_circle_linewidth)
+        
+        # Draw separator circle ONLY if both deletions AND duplications exist
+        # When only one event type exists, no separator is needed
+        has_dels = not dat_del.empty and len(dat_del[dat_del['blacklist_crossing'] == False]) > 0
+        has_dups = not dat_dup.empty and len(dat_dup[dat_dup['blacklist_crossing'] == False]) > 0
+        
+        if has_dels and has_dups:
+            theta_sep = np.linspace(0, 2 * np.pi, 100)
+            radius_sep = [blacklist_radius] * len(theta_sep)
+            ax.plot(theta_sep, radius_sep, 'k--', 
+                   linewidth=self.config.separator_circle_linewidth,
+                   alpha=self.config.separator_circle_alpha)
+        
+        # Plot deletions (including blacklist events in green at their assigned radii)
+        for idx, row in dat_del.iterrows():
+            theta = np.radians(row['deg1'])
+            theta2 = np.radians(row['deg2'])
+            
+            if theta2 < theta:
+                theta2 += 2 * np.pi
+            
+            theta_arc = np.linspace(theta, theta2, self.config.arc_resolution)
+            radius_arc = [row['radius']] * len(theta_arc)  # Use ASSIGNED radius only
+            
+            # Check if blacklist-crossing event - color GREEN, otherwise use normal color
+            is_blacklist = row.get('blacklist_crossing', False)
+            
+            if is_blacklist:
+                # Green gradient for blacklist events
+                if bl_max > bl_min:
+                    raw_norm = (row['value'] - bl_min) / (bl_max - bl_min)
+                    # Apply gradient compression for fixed scale
+                    if scale == 'fixed':
+                        norm_value = self._compress_gradient_fixed_scale(row['value'], bl_min, bl_max)
+                    else:
+                        norm_value = raw_norm
+                else:
+                    norm_value = 0.5
+                green_cmap = LinearSegmentedColormap.from_list(
+                    'bl_green', ['#E6FFE6', '#B3FFB3', '#66FF66', '#32CD32', '#228B22'])
+                color = green_cmap(norm_value)
+            else:
+                # Normal deletion color
+                if del_max > del_min:
+                    raw_norm = (row['value'] - del_min) / (del_max - del_min)
+                    # Apply gradient compression for fixed scale
+                    if scale == 'fixed':
+                        norm_value = self._compress_gradient_fixed_scale(row['value'], del_min, del_max)
+                    else:
+                        norm_value = raw_norm
+                else:
+                    norm_value = 0.5
+                color = self.del_cmap(norm_value)
+            
+            # Get alpha based on normalized value
+            alpha = self.config.visualization.alpha_min + (norm_value * self.config.visualization.alpha_range)
+            
+            # Get line width
+            linewidth = self._get_adaptive_linewidth(row['deg1'], dat_processed)
+            
+            # Draw arc at assigned radius (no overlay!)
+            ax.plot(theta_arc, radius_arc, color=color, 
+                   linewidth=linewidth, alpha=alpha, solid_capstyle='round', zorder=5)
+        
+        # Plot duplications (including blacklist events in green at their assigned radii)
+        for idx, row in dat_dup.iterrows():
+            theta = np.radians(row['deg1'])
+            theta2 = np.radians(row['deg2'])
+            
+            if theta2 < theta:
+                theta2 += 2 * np.pi
+            
+            theta_arc = np.linspace(theta, theta2, self.config.arc_resolution)
+            radius_arc = [row['radius']] * len(theta_arc)  # Use ASSIGNED radius only
+            
+            # Check if blacklist-crossing event - color GREEN, otherwise use normal color
+            is_blacklist = row.get('blacklist_crossing', False)
+            
+            if is_blacklist:
+                # Green gradient for blacklist events
+                if bl_max > bl_min:
+                    raw_norm = (row['value'] - bl_min) / (bl_max - bl_min)
+                    # Apply gradient compression for fixed scale
+                    if scale == 'fixed':
+                        norm_value = self._compress_gradient_fixed_scale(row['value'], bl_min, bl_max)
+                    else:
+                        norm_value = raw_norm
+                else:
+                    norm_value = 0.5
+                green_cmap = LinearSegmentedColormap.from_list(
+                    'bl_green', ['#E6FFE6', '#B3FFB3', '#66FF66', '#32CD32', '#228B22'])
+                color = green_cmap(norm_value)
+            else:
+                # Normal duplication color
+                if dup_max > dup_min:
+                    raw_norm = (row['value'] - dup_min) / (dup_max - dup_min)
+                    # Apply gradient compression for fixed scale
+                    if scale == 'fixed':
+                        norm_value = self._compress_gradient_fixed_scale(row['value'], dup_min, dup_max)
+                    else:
+                        norm_value = raw_norm
+                else:
+                    norm_value = 0.5
+                color = self.dup_cmap(norm_value)
+            
+            # Get alpha based on normalized value
+            alpha = self.config.visualization.alpha_min + (norm_value * self.config.visualization.alpha_range)
+            
+            # Get line width
+            linewidth = self._get_adaptive_linewidth(row['deg1'], dat_processed)
+            
+            # Draw arc at assigned radius (no overlay!)
+            ax.plot(theta_arc, radius_arc, color=color, 
+                   linewidth=linewidth, alpha=alpha, solid_capstyle='round', zorder=5)
+        
+        # Initialize gene track variables for later use
+        gene_track_outer = genome_radius  # Default if no genes
+        
+        # Add gene annotations if provided - with margin from genome circle
         if gene_annotations:
-            gene_track_inner = dynamic_radius + 25  # Start 25 units outside main circle
-            gene_track_outer = dynamic_radius + 40  # 15 units tall
-            gene_track_mid = (gene_track_inner + gene_track_outer) / 2
+            gene_margin = 8  # Margin between genome circle and gene track
+            gene_track_width = 15  # Track width
+            gene_track_inner = genome_radius + gene_margin
+            gene_track_outer = gene_track_inner + gene_track_width  # Outer edge of gene track
+            gene_radius = gene_track_inner + (gene_track_width / 2)  # Center of track for drawing
             
-            # Draw track background circle
-            track_bg = patches.Circle((0, 0), gene_track_outer, fill=False, linewidth=1,
-                                     color='lightgray', linestyle='--', alpha=0.5,
-                                     transform=ax.transData._b)  # type: ignore[attr-defined]
-            ax.add_patch(track_bg)
-            
-            # Draw each gene
             for gene in gene_annotations:
-                start_deg = np.radians(358 * gene['start'] / self.genome_length)
-                end_deg = np.radians(358 * gene['end'] / self.genome_length)
+                # Handle both dict and GeneAnnotation object formats
+                if hasattr(gene, 'start'):
+                    # It's a GeneAnnotation object
+                    start = gene.start
+                    end = gene.end
+                    color = gene.color
+                    name = getattr(gene, 'name', None)
+                elif isinstance(gene, dict):
+                    # It's a dict
+                    start = gene['start']
+                    end = gene['end']
+                    color = gene.get('color', (0, 0.5, 0))  # Default green
+                    name = gene.get('name')
+                else:
+                    logger.warning(f"Unknown gene annotation format: {type(gene)}")
+                    continue
                 
-                # Gene arc
-                theta = np.linspace(start_deg, end_deg, 50)
-                ax.fill_between(theta, gene_track_inner, gene_track_outer,
-                                color=gene['color'], alpha=0.8, linewidth=0)
+                start_deg = self.config.degrees_per_genome * start / self.genome_length
+                end_deg = self.config.degrees_per_genome * end / self.genome_length
                 
-                # Gene name (for larger genes only to avoid clutter)
-                gene_size = gene['end'] - gene['start']
-                if gene_size > 200:  # Only label genes >200bp
-                    mid_deg = (start_deg + end_deg) / 2
-                    label_radius = float(gene_track_outer) + 12.0  # Place just outside the track
+                theta_start = np.radians(start_deg)
+                theta_end = np.radians(end_deg)
+                
+                if theta_end < theta_start:
+                    theta_end += 2 * np.pi
+                
+                # Draw gene bar - thicker for wider track
+                theta_gene = np.linspace(theta_start, theta_end, 50)
+                radius_gene = [gene_radius] * len(theta_gene)
+                
+                ax.plot(theta_gene, radius_gene, color=color, 
+                       linewidth=gene_track_width, alpha=0.8, solid_capstyle='butt')
+                
+                # Add gene name - for larger genes only to avoid clutter
+                # Skip short yellow tRNA genes for cleaner appearance
+                gene_size_bp = end - start
+                if name and gene_size_bp > 200 and color != (1.0, 1.0, 0.0):  # Only label genes >200bp, skip yellow tRNA
+                    mid_theta = (theta_start + theta_end) / 2
+                    # Position text just outside the gene track for better visibility
+                    label_radius = float(gene_track_outer) + 12.0
                     
                     # Calculate rotation for text to be horizontal and readable
-                    # Convert back to degrees for rotation calculation
-                    rotation_deg = np.degrees(mid_deg)
+                    rotation_deg = np.degrees(mid_theta)
                     
-                    # When in clockwise mode, we need to mirror the angle
-                    # because set_theta_direction(-1) mirrors the coordinate system
+                    # When in clockwise mode, mirror the angle
                     if direction == 'clockwise':
-                        # Mirror the angle: 0° stays 0°, 90° becomes 270°, etc.
                         rotation_deg = 360 - rotation_deg
                     
-                    # Now apply the standard logic: flip text on bottom half
+                    # Flip text on bottom half to keep readable
                     if rotation_deg > 90 and rotation_deg < 270:
                         rotation_deg = rotation_deg + 180
                     
-                    ax.text(mid_deg, label_radius, gene['name'],
+                    ax.text(mid_theta, label_radius, name,
                            rotation=rotation_deg, ha='center', va='center',
                            fontsize=7, weight='bold', color='black')
-
         
-        # Draw separator circle between del and dup radii (always present)
-        separator_circle = patches.Circle((0, 0), blacklist_radius + 15, fill=False, linewidth=2, 
-                                        color='lightgray', linestyle='--', alpha=0.7,
-                                        transform=ax.transData._b)  # type: ignore[attr-defined]
-        ax.add_patch(separator_circle)
-        
-        # Add blacklist regions
+        # Add blacklist regions visualization - CLEAR ARC with EDGE LINES
         if blacklist_regions:
-            # Find actual minimum event radius for inward lines
-            min_event_radius = dat_processed['radius'].min() if not dat_processed.empty else 50
+            logger.info(f"Drawing {len(blacklist_regions)} blacklist regions at radius {blacklist_radius:.1f}")
+            # Find the actual min/max radius of events for proper edge line rendering
+            min_event_radius = dat_processed['radius'].min() if not dat_processed.empty else 20
+            max_event_radius = dat_processed['radius'].max() if not dat_processed.empty else genome_radius
             
-            for region in blacklist_regions:
-                start_pos = int(region['start'])
-                end_pos = int(region['end'])
+            for bl in blacklist_regions:
+                # Handle both dict and BlacklistRegion object formats
+                if hasattr(bl, 'name'):
+                    name = bl.name
+                    start = bl.start
+                    end = bl.end
+                elif isinstance(bl, dict):
+                    name = bl.get('name')
+                    start = bl['start']
+                    end = bl['end']
+                else:
+                    continue
                 
-                start_deg = np.radians(358 * start_pos / self.genome_length)
-                end_deg = np.radians(358 * end_pos / self.genome_length)
+                # Calculate angles
+                start_deg = self.config.degrees_per_genome * start / self.genome_length
+                end_deg = self.config.degrees_per_genome * end / self.genome_length
+                theta_start = np.radians(start_deg)
+                theta_end = np.radians(end_deg)
                 
-                arc_width = end_deg - start_deg
-                min_width = np.radians(2)
-                if arc_width < min_width:
-                    mid_deg = (start_deg + end_deg) / 2
-                    start_deg = mid_deg - min_width/2
-                    end_deg = mid_deg + min_width/2
+                if theta_end < theta_start:
+                    theta_end += 2 * np.pi
                 
-                theta = np.linspace(start_deg, end_deg, 50)
-                ax.plot(theta, [blacklist_radius]*len(theta), color='black', linewidth=4, alpha=0.9, solid_capstyle='round')
+                # REMOVED: Thick black arc on separator circle - too cluttering
+                # Blacklist regions are only indicated by the dashed edge lines
                 
-                # Radial lines from blacklist to outer circle and inner events
-                ax.plot([start_deg, start_deg], [blacklist_radius, dynamic_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
-                ax.plot([end_deg, end_deg], [blacklist_radius, dynamic_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                # Draw THIN EDGE LINES at both boundaries from config
+                for theta in [theta_start, theta_end]:
+                    # From minimum event radius to genome circle
+                    ax.plot([theta, theta], [min_event_radius, genome_radius],
+                           color='gray', linestyle='--', 
+                           linewidth=self.config.layout.blacklist_boundary_linewidth, 
+                           alpha=self.config.layout.blacklist_boundary_alpha, 
+                           zorder=11)
                 
-                # Lines extending inward if there are inner events
-                if min_event_radius < blacklist_radius:
-                    ax.plot([start_deg, start_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
-                    ax.plot([end_deg, end_deg], [min_event_radius, blacklist_radius], color='gray', linewidth=1, linestyle='--', alpha=0.6)
+                # Add label if name exists
+                if name:
+                    mid_pos = (start + end) / 2
+                    mid_deg = self.config.degrees_per_genome * mid_pos / self.genome_length
+                    theta = np.radians(mid_deg)
+                    
+                    # Draw connecting line from BL region to label
+                    label_radius = blacklist_radius + 25
+                    ax.plot([theta, theta], [blacklist_radius + 3, label_radius - 3],
+                           'k-', linewidth=0.8, alpha=0.6, zorder=10)
+                    
+                    ax.text(theta, label_radius, name, 
+                           ha='center', va='center', fontsize=9, weight='bold',
+                           bbox=dict(boxstyle='round,pad=0.3', 
+                                   facecolor='white', edgecolor='black', 
+                                   linewidth=1.5, alpha=1.0),
+                           zorder=11)
+        
+        logger.info("=== LABEL CREATION ===")
+        logger.info(f"All groups in processed data: {sorted(dat_processed['group'].unique())}")
+        logger.info(f"Groups in bands: {[b.group_id for b in layout_result.group_bands]}")
+        logger.info(f"Groups in singles: {[layout_result.events.iloc[s.event_index]['group'] for s in layout_result.single_events]}")
+
+        # Add group labels with SYSTEMATIC collision avoidance
+        # Include multi-event bands, single events, AND fallback for any unlabeled groups
+        if layout_result.group_bands or layout_result.single_events or not dat_processed.empty:
+            seen_groups = set()  # Track which groups we've already labeled
+            label_positions = []
+            
+            # Add labels for multi-event group bands (ONE per group)
+            for group_band in layout_result.group_bands:
+                if group_band.n_events > 0:
+                    # Skip if we already labeled this base group
+                    base_group_id = group_band.group_id  # e.g., "G2" even if band is "G2a"
+                    if base_group_id in seen_groups:
+                        continue
+                    seen_groups.add(base_group_id)
+                    
+                    # Smart label positioning with collision avoidance
+                    # Try leftmost first, then next events if collision detected
+                    candidate_indices = group_band.event_indices[:min(5, len(group_band.event_indices))]
+                    
+                    best_idx = None
+                    min_conflict = float('inf')
+                    
+                    min_separation = self.config.layout.label_min_angular_separation
+                    
+                    for idx in candidate_indices:
+                        event = layout_result.events.loc[idx]
+                        label_deg = event['deg1']
+                        
+                        # Calculate total conflict score with existing labels
+                        total_conflict = 0
+                        for existing in label_positions:
+                            # Calculate angular distance (handling wraparound)
+                            ang_dist = abs(label_deg - existing['deg'])
+                            if ang_dist > 180:
+                                ang_dist = 360 - ang_dist
+                            
+                            # Score conflict based on proximity
+                            if ang_dist < min_separation:
+                                # Too close - high penalty
+                                total_conflict += (min_separation - ang_dist) * 10
+                        
+                        # Choose event with minimum conflict
+                        if total_conflict < min_conflict:
+                            min_conflict = total_conflict
+                            best_idx = idx
+                    
+                    # Use the best position found
+                    leftmost_event = layout_result.events.loc[best_idx]
+                    
+                    # Get position and radius from engine-assigned data
+                    label_deg = leftmost_event['deg1']
+                    event_radius = leftmost_event['radius']
+                    event_type = leftmost_event['final_event']
+                    
+                    # LIGHTWEIGHT COLLISION RESOLUTION: If still conflicts after trying all candidates,
+                    # apply small radial offset (nudge inward) to create vertical separation
+                    radial_offset = 0
+                    if min_conflict > 0:  # Still has conflict
+                        # Check if there's a nearby label (within min_separation)
+                        for existing in label_positions:
+                            ang_dist = abs(label_deg - existing['deg'])
+                            if ang_dist > 180:
+                                ang_dist = 360 - ang_dist
+                            
+                            if ang_dist < min_separation:
+                                # Apply radial nudge: alternate between inward/outward
+                                # Use group index to alternate direction
+                                nudge_direction = 1 if len(label_positions) % 2 == 0 else -1
+                                radial_offset = nudge_direction * self.config.layout.label_radial_nudge
+                                logger.info(f"  Applying radial nudge {radial_offset}px to {base_group_id} "
+                                          f"(conflict with nearby label at {ang_dist:.1f}°)")
+                                break
+                    
+                    # Label color based on event TYPE (red=del, blue=dup)
+                    label_color = del_label_color if event_type == 'del' else dup_label_color
+                    
+                    label_positions.append({
+                        'deg': label_deg,
+                        'radius': event_radius,
+                        'radial_offset': radial_offset,  # Store offset for rendering
+                        'label': base_group_id,  # Use base group ID only
+                        'color': label_color
+                    })
+                    logger.info(f"  Band label {base_group_id}: deg={label_deg:.1f}, radius={event_radius:.1f}, type={event_type}, conflict={min_conflict:.1f}")
+            
+            # Add labels for single-event groups (if not already labeled)
+            for single_event in layout_result.single_events:
+                event = layout_result.events.iloc[single_event.event_index]
+                group_id = event['group']
+                
+                # Skip if already labeled
+                if group_id in seen_groups:
+                    continue
+                seen_groups.add(group_id)
+                
+                # Label color based on event TYPE (red=del, blue=dup)
+                label_color = del_label_color if event['final_event'] == 'del' else dup_label_color
+                
+                label_positions.append({
+                    'deg': event['deg1'],
+                    'radius': single_event.radius,
+                    'radial_offset': 0,  # No offset for single events (no conflict expected)
+                    'label': group_id,
+                    'color': label_color
+                })
+                logger.info(f"  Single label {group_id}: deg={event['deg1']:.1f}, radius={single_event.radius:.1f}")
+
+            # FALLBACK: Label any remaining groups that weren't in bands or single_events
+            all_groups = layout_result.events['group'].unique()
+            for group_id in all_groups:
+                if group_id in seen_groups:
+                    continue
+                
+                # Find representative event for this group from layout_result.events
+                group_events = layout_result.events[layout_result.events['group'] == group_id]
+                if not group_events.empty:
+                    # Use leftmost event
+                    leftmost_idx = group_events['deg1'].idxmin()
+                    leftmost_event = group_events.loc[leftmost_idx]
+                    
+                    # Label color based on event TYPE (red=del, blue=dup)
+                    label_color = del_label_color if leftmost_event['final_event'] == 'del' else dup_label_color
+                    
+                    seen_groups.add(group_id)
+                    label_positions.append({
+                        'deg': leftmost_event['deg1'],
+                        'radius': leftmost_event['radius'],
+                        'radial_offset': 0,  # No offset for fallback
+                        'label': group_id,
+                        'color': label_color
+                    })
+                    logger.info(f"Added fallback label for group {group_id} (not in layout bands)")
+            
+            # Log all labels being drawn
+            logger.info(f"Drawing {len(label_positions)} group labels: {[p['label'] for p in label_positions]}")
+            
+            # Third pass: Draw labels at adjusted positions with config styling
+            # HIGH Z-ORDER ensures labels draw on top of all arcs and blacklist lines
+            logger.info(f"TOTAL LABELS TO DRAW: {len(label_positions)}")
+            for pos in label_positions:
+                logger.info(f"  {pos['label']}: deg={pos['deg']:.2f}, radius={pos['radius']:.2f}, color={pos['color']}")
+                
+            for pos in label_positions:
+                theta = np.radians(pos['deg'])
+                event_radius = pos['radius']
+                radial_offset = pos.get('radial_offset', 0)  # Get offset if present
+                
+                # Keep labels inside plot area with margin
+                label_offset = 12
+                max_label_radius = genome_radius - 20  # 20px margin from edge
+                
+                # Apply radial nudge if there was a conflict
+                label_radius = min(event_radius + label_offset + radial_offset, max_label_radius)
+                
+                # Draw thin pointer line from event to label using config
+                ax.plot([theta, theta], 
+                       [event_radius + 1, label_radius - 3],
+                       color='gray', 
+                       linewidth=self.config.layout.label_connector_linewidth, 
+                       alpha=0.6, zorder=100)  # High z-order
+                
+                # Draw small marker at event position
+                ax.plot(theta, event_radius, 'o', 
+                       markersize=1.5, color='gray', alpha=0.8, zorder=101)
+                
+                # Add label with clean colored box - using config parameters
+                ax.text(theta, label_radius, pos['label'],
+                       ha='center', va='center', 
+                       fontsize=self.config.layout.label_fontsize,
+                       weight='normal',
+                       color=pos['color'],
+                       bbox=dict(boxstyle=f'round,pad={self.config.layout.label_box_padding}',
+                               facecolor='white', edgecolor=pos['color'], 
+                               linewidth=self.config.layout.label_box_linewidth, 
+                               alpha=1.0),
+                       zorder=102)  # Highest z-order - on top of everything
+        
+        # Configure axes
+        ax.set_ylim(0, max_plot_radius)
+        ax.set_xticklabels([])
+        ax.set_yticklabels([])
+        ax.spines['polar'].set_visible(False)
+        ax.grid(False)
         
         # Add position markers - adjusted for gene track spacing
         positions = np.arange(0, self.genome_length, 1000)
         for pos in positions:
-            deg = np.radians(358 * pos / self.genome_length)
-            marker_start = gene_track_outer + 5 if gene_annotations else dynamic_radius
+            deg = np.radians(self.config.degrees_per_genome * pos / self.genome_length)
+            # Position markers outside genes if present
+            marker_start = gene_track_outer + 5 if gene_annotations else genome_radius + 5
             text_offset = 18 if gene_annotations else 12  # More space when genes present
-            ax.plot([deg, deg], [marker_start, marker_start + 5], color='gray', linewidth=1)
-            ax.text(deg, marker_start + text_offset, f'{pos//1000}', ha='center', va='center', 
-                fontsize=9, color='gray')
-        
-        # Plot events
-        for i, (_, event) in enumerate(dat_processed.iterrows()):
-            deg1_rad = np.radians(event['deg1'])
-            deg2_rad = np.radians(event['deg2'])
-            radius = event['radius']
-            het_val = event['value']
             
-            if blacklist_regions and event['blacklist_crossing']:
-                # Use gradient coloring for BL events based on heteroplasmy
-                color = self._get_lime_green_color(het_val, bl_min, bl_max)
-                alpha = self._get_continuous_alpha(het_val, bl_min, bl_max)
-                logger.debug(f"Plotting blacklist event at {event['start']}-{event['end']}, het={het_val:.1f}%")
-            else:
-                if event['final_event'] == 'del':
-                    # Use the color function based on del_color parameter
-                    del_color_func = self._get_pure_red_color if del_color == 'red' else self._get_pure_blue_color
-                    color = del_color_func(het_val, del_min, del_max)
-                    alpha = self._get_continuous_alpha(het_val, del_min, del_max)
-                else:
-                    # Use the color function based on dup_color parameter
-                    dup_color_func = self._get_pure_red_color if dup_color == 'red' else self._get_pure_blue_color
-                    color = dup_color_func(het_val, dup_min, dup_max) 
-                    alpha = self._get_continuous_alpha(het_val, dup_min, dup_max)
-                
-            theta = np.linspace(deg1_rad, deg2_rad, 100)
-            linewidth = 2.5 if len(dat_processed) <= 100 else (2.0 if len(dat_processed) <= 200 else 1.5)
-            ax.plot(theta, [radius]*len(theta), color=color, linewidth=linewidth, alpha=alpha)
-
-        # Group labeling
-        if not dat_processed.empty:
-            group_representatives: Dict[str, Dict[str, Any]] = {}
-            for _, event in dat_processed.iterrows():
-                group_id = event['group']
-                het_val = event['value']
-                # pick up the leftmost one for labeling
-                if group_id not in group_representatives or event['deg1'] < group_representatives[group_id]['deg']:
-                    group_representatives[group_id] = {
-                        'deg': event['deg1'],  # Now using leftmost position
-                        'radius': event['radius'],
-                        'het_val': het_val,
-                        'event_type': event['final_event']
-                    }
+            # Small tick mark
+            ax.plot([deg, deg], [marker_start, marker_start + 5], 
+                   color='gray', linewidth=1, alpha=0.7)
             
-            for group_id, info in group_representatives.items():
-                breakpoint_deg_rad = np.radians(info['deg'])
-                breakpoint_radius = info['radius']
-                label_radius = float(breakpoint_radius) + 17.0
-                
-                label_color = 'blue' if info['event_type'] == 'del' else 'red'
-                
-                ax.plot([breakpoint_deg_rad, breakpoint_deg_rad], 
-                        [float(breakpoint_radius) + 1.5, label_radius - 4], 
-                        color='grey', linewidth=1, alpha=0.7, linestyle='-')
-                
-                ax.plot(breakpoint_deg_rad, breakpoint_radius, 
-                        marker='o', markersize=3, color='grey', alpha=0.8)
-                
-                ax.text(breakpoint_deg_rad, label_radius, group_id, 
-                        ha='center', va='center', fontsize=6, weight='normal',
-                        color=label_color,
-                        bbox=dict(boxstyle="round,pad=0.15", facecolor='white', 
-                                alpha=0.9, edgecolor=label_color, linewidth=0.8))
-
-        # LEGENDS IN SEPARATE AREAS OF THE FIGURE                 
-        # 1. EVENT COUNT SUMMARY - Unified box with all counts
-        # Draw the box first
+            # Position label (kb)
+            ax.text(deg, marker_start + text_offset, f'{pos//1000}', 
+                   ha='center', va='center', fontsize=9, color='gray')
         
+        # Add title - position from config for easy adjustment
+        if title is None:
+            bl_text = f" (BL: {len(blacklist_regions)} regions)" if blacklist_regions else ""
+            title = f"Mitochondrial DNA Structural Alterations{bl_text}"
+        
+        # Title at top - y position configurable
+        fig.text(0.5, self.config.title_y_position, title, 
+                ha='center', va='top', fontsize=self.config.title_fontsize, 
+                weight='bold', transform=fig.transFigure)
+        
+        # Add count box - centered at same X as other legends for perfect alignment
+        count_text_lines = [f"Del: {del_count}  Dup: {dup_count}"]
         if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
-            # Box for 2 lines
-            box_height = 0.065
-            box_y = 0.80
-            text_y = 0.85
-            box = FancyBboxPatch((0.055, box_y), 0.17, box_height,
-                                boxstyle="round,pad=0.008", 
-                                facecolor='white', edgecolor='gray',
-                                alpha=0.9, transform=fig.transFigure)
-            fig.patches.append(box)
-            
-            # First line: Del and Dup counts
-            fig.text(0.06, text_y, f"Del: {del_count}  Dup: {dup_count}", 
-                    fontsize=13, weight='bold', verticalalignment='top')
-            
-            # Second line - all in lime-green
-            y_bl = 0.820
-            x_start = 0.06
-
-            # Entire BL line in green for clarity
-            fig.text(x_start, y_bl, f"BL Del: {bl_del_count}  BL Dup: {bl_dup_count}", 
-                    fontsize=13, weight='bold', color=(0.2, 0.8, 0.2), verticalalignment='top')
+            count_text_lines.append(f"BL Del: {bl_del_count}  BL Dup: {bl_dup_count}")
+        
+        # Tight, compact box sizing
+        if len(count_text_lines) == 2:
+            # Two lines - compact vertical spacing
+            box_width = 0.14  # Fixed width for consistency
+            box_height = 0.052  # Compact height for 2 lines
+            box_y_pos = 0.78  # Position
+            line_spacing = 0.022  # Tight line spacing
         else:
-            # Single line box - adjusted to align properly
-            box_height = 0.035
-            box_y = 0.83
-            text_y = 0.855
-            box = FancyBboxPatch((0.055, box_y), 0.14, box_height,
-                                boxstyle="round,pad=0.008", 
-                                facecolor='white', edgecolor='gray',
-                                alpha=0.9, transform=fig.transFigure)
-            fig.patches.append(box)
+            # Single line - even more compact
+            box_width = 0.12
+            box_height = 0.03
+            box_y_pos = 0.80
+            line_spacing = 0
+        
+        # Center box at same x as other legends (0.12)
+        count_box_x = 0.12 - box_width / 2  # Center box at 0.12
+        
+        # Draw count box with minimal padding
+        count_box = FancyBboxPatch(
+            (count_box_x, box_y_pos),
+            box_width, box_height,
+            boxstyle="round,pad=0.004",  # Minimal padding
+            facecolor='white',
+            edgecolor='gray',
+            linewidth=1.2,
+            transform=fig.transFigure,
+            zorder=100
+        )
+        fig.patches.append(count_box)
+        
+        # Add count text with tight spacing - centered at 0.12
+        if len(count_text_lines) == 2:
+            # Two lines - centered vertically in box
+            y_start = box_y_pos + box_height * 0.68
+            for i, line in enumerate(count_text_lines):
+                text_color = 'black' if i == 0 else 'limegreen'
+                fig.text(0.12, y_start - (i * line_spacing), line,  # Centered at 0.12
+                        fontsize=12, weight='bold', color=text_color,
+                        ha='center', va='center', transform=fig.transFigure, zorder=101)
+        else:
+            # Single line - centered at 0.12
+            fig.text(0.12, box_y_pos + box_height/2, count_text_lines[0],  # Centered at 0.12
+                    fontsize=12, weight='bold', color='black',
+                    ha='center', va='center', transform=fig.transFigure, zorder=101)
+        
+        # Add heteroplasmy scale legend - PROPERLY CENTERED and LARGER
+        # Calculate legend positioning dynamically for better centering
+        legend_x = 0.12  # Base X position for legend group
+        legend_y = 0.30  # Base Y position (raised for better spacing)
+        legend_height = 0.22  # Taller bars
+        bar_width = 0.020  # Slightly wider bars for visibility
+        bar_gap = 0.024  # Better spacing between bars
+        
+        # Title for heteroplasmy legend - LARGER and bold
+        fig.text(legend_x, legend_y + legend_height + 0.045, "Heteroplasmy (%)",
+                fontsize=14, weight='bold', ha='center', va='bottom', 
+                transform=fig.transFigure)
+        
+        # Determine which scale bars to show
+        scale_types = []
+        if not del_events.empty:
+            # Filter out blacklist-crossing deletions for the Del bar
+            del_non_bl = del_events[del_events.get('blacklist_crossing', False) == False]
+            if not del_non_bl.empty:
+                scale_types.append(('Del', del_label_color, self.del_cmap, del_min, del_max))
+        
+        if not dup_events.empty:
+            # Filter out blacklist-crossing duplications for the Dup bar  
+            dup_non_bl = dup_events[dup_events.get('blacklist_crossing', False) == False]
+            if not dup_non_bl.empty:
+                scale_types.append(('Dup', dup_label_color, self.dup_cmap, dup_min, dup_max))
+        
+        if blacklist_regions and bl_max > bl_min:
+            # Use proper lime green gradient for BL
+            scale_types.append(('BL', 'limegreen', LinearSegmentedColormap.from_list(
+                'blacklist', ['#E6FFE6', '#B3FFB3', '#66FF66', '#32CD32', '#228B22']), bl_min, bl_max))
+        
+        # Calculate total width and starting position for better centering
+        total_bars = len(scale_types)
+        if total_bars > 0:
+            total_width = total_bars * bar_width + (total_bars - 1) * bar_gap
+            start_x = legend_x - total_width / 2
             
-            fig.text(0.06, text_y, f"Del: {del_count}  Dup: {dup_count}", 
-                    fontsize=13, weight='bold', verticalalignment='top')
+            # Draw gradient bars
+            for i, (label, color, cmap, vmin, vmax) in enumerate(scale_types):
+                bar_x = start_x + i * (bar_width + bar_gap)
+                
+                # Get actual max for this type
+                if label == 'Del':
+                    actual_max = del_actual_max
+                elif label == 'Dup':
+                    actual_max = dup_actual_max
+                elif label == 'BL':
+                    actual_max = bl_actual_max
+                else:
+                    actual_max = vmax
+                
+                # Create gradient using rectangles
+                n_colors = 50  # Smooth gradient
+                for j in range(n_colors):
+                    y_frac = j / n_colors
+                    y = legend_y + y_frac * legend_height
+                    height = legend_height / n_colors
+                    
+                    # Color based on position in gradient
+                    # For fixed scale, apply the same compression used in plotting
+                    if scale == 'fixed':
+                        # Calculate the actual value this y position represents
+                        value_at_y = vmin + y_frac * (vmax - vmin)
+                        # Apply compression function to get colormap lookup
+                        norm_val = self._compress_gradient_fixed_scale(value_at_y, vmin, vmax)
+                    else:
+                        # Dynamic scale uses linear gradient
+                        norm_val = j / (n_colors - 1)
+                    
+                    bar_color = cmap(norm_val)
+                    
+                    rect = plt.Rectangle((bar_x, y), bar_width, height,
+                                        facecolor=bar_color, transform=fig.transFigure,
+                                        linewidth=0)
+                    fig.patches.append(rect)
+                
+                # Determine precision based on event type (ONCE for all labels)
+                # BL events are typically low heteroplasmy (artifacts) - need 2 decimals
+                # Del/Dup events use 1 decimal
+                decimal_places = 2 if label == 'BL' else 1
+                
+                # Add dashed line at actual max value (if different from scale max)
+                if scale == 'fixed' and actual_max > 0 and actual_max < vmax:
+                    # Calculate y position for actual max
+                    actual_frac = actual_max / vmax
+                    actual_y = legend_y + actual_frac * legend_height
+                    
+                    # Draw dashed line across the bar
+                    line_x = [bar_x - 0.003, bar_x + bar_width + 0.003]
+                    line_y = [actual_y, actual_y]
+                    
+                    from matplotlib.lines import Line2D
+                    line = Line2D(line_x, line_y, color='black', linewidth=1.5, 
+                                 linestyle='--', alpha=0.8, transform=fig.transFigure, zorder=10)
+                    fig.lines.append(line)
+                    
+                    # Add label for actual max (small, to the right) with appropriate precision
+                    fig.text(bar_x + bar_width + 0.006, actual_y, f"{actual_max:.{decimal_places}f}",
+                            fontsize=8, ha='left', va='center', transform=fig.transFigure,
+                            color='black', weight='bold')
+                
+                # NO border around gradient - cleaner appearance
+                
+                # Add min/max labels with appropriate precision
+                fig.text(bar_x + bar_width/2, legend_y - 0.01, f"{vmin:.{decimal_places}f}",
+                        fontsize=11, ha='center', va='top', transform=fig.transFigure)
+                fig.text(bar_x + bar_width/2, legend_y + legend_height + 0.01, f"{vmax:.{decimal_places}f}",
+                        fontsize=11, ha='center', va='bottom', transform=fig.transFigure)
+                
+                # Add type label with LARGER font (12pt)
+                fig.text(bar_x + bar_width/2, legend_y - 0.03, label,
+                        fontsize=12, color=color, weight='bold', ha='center', va='top',
+                        transform=fig.transFigure)
         
+        # Add metadata if provided
+        if metadata_text:
+            fig.text(0.5, 0.02, metadata_text,
+                    fontsize=8, ha='center', va='bottom', transform=fig.transFigure,
+                    style='italic', wrap=True)
         
-        # 2. SEPARATE GRADIENT LEGENDS - independently scaled
-        legend_x = 0.08
-        legend_y = 0.48
-        legend_height = 0.30
-        
-        # Calculate BL events for legend display (bl_min and bl_max already calculated above)
-        bl_events = pd.DataFrame()
-        show_bl_bar = False
-        
-        if blacklist_regions and (bl_del_count > 0 or bl_dup_count > 0):
-            bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
-            if not bl_events.empty:
-                show_bl_bar = True
-        
-        # Determine number of bars and calculate widths with more spacing
-        num_bars = 3 if show_bl_bar else 2
-        bar_gap = 0.030  # Increased for even more space
-        legend_width = 0.04 if num_bars == 2 else 0.070  # Adjusted for new spacing
-        bar_width = (legend_width - (num_bars - 1) * bar_gap) / num_bars
-
-        # Choose color functions based on parameters
-        del_color_func = self._get_pure_red_color if del_color == 'red' else self._get_pure_blue_color
-        dup_color_func = self._get_pure_red_color if dup_color == 'red' else self._get_pure_blue_color
-
-        # Draw deletion legend (first bar)
-        self._draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
-                            del_events, del_min, del_max, "Del", del_color_func, del_label_color, offset_x=0)
-
-        # Draw duplication legend (second bar)
-        self._draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
-                            dup_events, dup_min, dup_max, "Dup", dup_color_func, dup_label_color, 
-                            offset_x=bar_width + bar_gap)
-
-        # Draw BL legend (third bar) if applicable
-        if show_bl_bar:
-            bl_offset = 2 * (bar_width + bar_gap)
-            self._draw_gradient_legend(fig, legend_x, legend_y, legend_height, bar_width,
-                                bl_events, bl_min, bl_max, "BL", self._get_lime_green_color, (0.2, 0.8, 0.2), 
-                                offset_x=bl_offset, is_bl=True)
-
-        # Heteroplasmy label above all bars
-        fig.text(legend_x + legend_width/2, legend_y + legend_height/2 + 0.05, 
-                "Heteroplasmy (%)", fontsize=11, weight='bold', ha='center')
-        
-        # Gene annotation legend (if present) - moved to left side
+        # Add genes legend - LEFT side, properly CENTERED with LARGER fonts
         if gene_annotations:
-            legend_items = [
-                ('Protein-coding', (0, 0.5, 0)),      # Green
-                ('tRNA', (1, 1, 0)),                  # Yellow
-                ('rRNA', (0.5, 0, 0.5))               # Purple
+            genes_x = 0.12  # Same x as other legends for perfect alignment
+            genes_y = 0.16  # Below heteroplasmy scale with proper spacing
+            
+            # Title - LARGER and bold
+            fig.text(genes_x, genes_y + 0.015, "Genes",
+                    fontsize=14, weight='bold', ha='center', va='bottom',
+                    transform=fig.transFigure)
+            
+            # Gene type legend with better spacing and larger fonts
+            gene_types = [
+                ('Protein-coding', (0.0, 0.5, 0.0)),  # Green
+                ('tRNA', (1.0, 1.0, 0.0)),  # Yellow
+                ('rRNA', (0.5, 0.0, 0.5))   # Purple
             ]
             
-            # Position on left side, below the heteroplasmy legend
-            legend_y_start = legend_y - legend_height/2 - 0.1  # Below heteroplasmy label
-            legend_box_size = 0.025
+            # Center the legend items properly
+            legend_box_width = 0.15  # Slightly wider for better appearance
+            start_x = genes_x - legend_box_width/2 + 0.01
             
-            # Header for gene legend - centered and aligned with Heteroplasmy title
-            fig.text(legend_x + legend_width/2, legend_y_start + 0.04, 
-                    "Genes", fontsize=11, weight='bold', ha='center')
-            
-            for i, (label, color) in enumerate(legend_items):
-                y_pos = legend_y_start - i * 0.04
+            for i, (gene_type, color) in enumerate(gene_types):
+                y_pos = genes_y - 0.020 - i * 0.030  # Better vertical spacing
                 
-                # Color box
-                rect = plt.Rectangle((legend_x, y_pos), legend_box_size, 0.025,
-                                    facecolor=color, alpha=0.8,
+                # Color box - NO border for cleaner appearance
+                rect = plt.Rectangle((start_x, y_pos - 0.010), 0.032, 0.020,
+                                    facecolor=color, edgecolor='none', linewidth=0,
                                     transform=fig.transFigure)
                 fig.patches.append(rect)
                 
-                # Label
-                fig.text(legend_x + legend_box_size + 0.01, y_pos + 0.0125,
-                        label, fontsize=9, va='center')
+                # Label - LARGER font with proper spacing
+                fig.text(start_x + 0.038, y_pos, gene_type,
+                        fontsize=11, va='center', ha='left', 
+                        transform=fig.transFigure)
         
-        ax.grid(False)
-        ax.set_xticklabels([])
-
+        plt.tight_layout()
         
-        ax.grid(False)
-        ax.set_xticklabels([])
-        ax.set_yticklabels([])
-        
-        title = 'Mitochondrial DNA Structural Alterations'
-        if blacklist_regions:
-            title += f' (BL: {len(blacklist_regions)} regions)'
-        
-        fig.suptitle(title, fontsize=15, weight='bold', y=0.98)
-        
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        plt.close()
-        
+        # Save figure
+        fig.savefig(output_file, dpi=self.config.dpi, bbox_inches='tight',
+                   facecolor='white', edgecolor='none')
         logger.info(f"Plot saved to {output_file}")
-        logger.info(f"Plotted {len(dat_processed)} events")
-
         
-    def group_sort_key(self, group_id: str) -> Tuple[int, int]:
-        """Convert group ID to sortable tuple (priority, number)"""
-        match = re.match(r'^([A-Z]+)(\d+)$', group_id)
-        if match:
-            prefix, number = match.groups()
-            if prefix == 'G':
-                return (0, int(number))
-            elif prefix == 'BL':
-                return (1000, int(number))
-            else:
-                logger.warning(f"Unexpected group ID format: {group_id}")
-                return (9999, int(number))
-        else:
-            logger.warning(f"Could not parse group ID: {group_id}")
-            return (9999, 0)
-
-
-def plot_circular(
-    events: pd.DataFrame,
-    output_file: str,
-    genome_length: int,
-    blacklist_regions: Optional[List[BlacklistRegion]] = None, 
-    figsize: Tuple[int, int] = (16, 10),
-    direction: Literal['clockwise', 'counterclockwise'] = 'counterclockwise', 
-    del_color: Literal['red', 'blue'] = 'red',
-    dup_color: Literal['red', 'blue'] = 'blue',
-    gene_annotations: Optional[List[GeneAnnotation]] = None,
-    scale: Literal['dynamic', 'fixed'] = 'dynamic'
-) -> None:
-    """
-    Convenience function to create circular plot
-    
-    Args:
-        events: DataFrame with events
-        output_file: Output PNG file path
-        genome_length: Mitochondrial genome length
-        blacklist_regions: List of blacklist regions
-        figsize: Figure size tuple
-        direction: 'clockwise' or 'counterclockwise' (default: 'counterclockwise')
-        del_color: Color for deletions - 'red' or 'blue' (default: 'red')
-        dup_color: Color for duplications - 'red' or 'blue' (default: 'blue')
-        gene_annotations: List of gene annotation dicts (optional)
-        scale: Heteroplasmy color scale - 'dynamic' (min-max per category) or 'fixed' (0-100%) (default: 'dynamic')
-    """
-    plotter = CircularPlotter(genome_length)
-    plotter.plot(events, output_file, blacklist_regions, figsize, direction, del_color, dup_color, gene_annotations, scale)
+        if show:
+            plt.show()
+        
+        return fig

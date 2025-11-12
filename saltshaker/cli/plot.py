@@ -8,7 +8,7 @@ from argparse import ArgumentParser, Namespace, _SubParsersAction
 import pandas as pd
 
 # Runtime imports
-from ..visualizer import plot_circular
+from ..visualizer import CircularPlotter
 from ..io import BlacklistReader, read_intermediate, GeneAnnotationReader
 from ..data import DEFAULT_MT_BLACKLIST, DEFAULT_MT_GENES
 
@@ -59,6 +59,10 @@ def add_parser(subparsers: _SubParsersAction) -> ArgumentParser:
     parser.add_argument('--blacklist', nargs='?', const='default', metavar='BED_FILE',
                         help='Enable blacklist regions. Use built-in default if no file specified, or provide custom BED file path')
     
+    # Debug flag
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging for troubleshooting')
+
+    
     return parser  # type: ignore[no-any-return]
 
 
@@ -69,7 +73,19 @@ def run(args: Namespace) -> None:
     Args:
         args: Parsed command-line arguments from argparse
     """
-    logger.info("=== SaltShaker: Circular Plot ===")
+    # Configure logging as early as possible for this subcommand
+    logging.basicConfig(
+        level=logging.DEBUG if getattr(args, "debug", False) else logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        force=True
+    )
+    
+    # Silence very noisy third-party loggers (matplotlib font discovery etc.)
+    for noisy in ("matplotlib", "matplotlib.font_manager", "PIL", "PIL.Image", "urllib3", "fontTools"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Ensure our package logs at DEBUG when requested, otherwise at INFO
+    logging.getLogger("SaltShaker").setLevel(logging.DEBUG if getattr(args, "debug", False) else logging.INFO)
     
     # Setup directories
     input_dir = Path(args.input_dir)
@@ -138,18 +154,19 @@ def run(args: Namespace) -> None:
     logger.info("Generating plot...")
     
     figsize: Tuple[int, int] = tuple(args.figsize)  # type: ignore
-    plot_circular(
-        events,
-        str(plot_file),
-        genome_length,
-        blacklist_regions,
+    plotter = CircularPlotter(genome_length)
+
+    fig = plotter.plot(
+        events=events,
+        output_file=str(plot_file),
+        blacklist_regions=blacklist_regions,
         figsize=figsize,
-        direction=args.direction,
+        direction=args.direction,  # Pass the direction parameter
         del_color=args.del_color,
         dup_color=args.dup_color,
         gene_annotations=gene_annotations,
         scale=args.scale
     )
-    
+
     
     logger.info(f"✓ Plot saved: {plot_file}")
