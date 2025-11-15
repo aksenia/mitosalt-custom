@@ -190,17 +190,17 @@ class PlotConfig:
     # ============================================================
     # GENOME CIRCLE
     # ============================================================
-    degrees_per_genome: int = 358
-    """Total degrees around circle (360° leaves 2° gap at top)"""
+    degrees_per_genome: int = 360
+    """Total degrees around circle (360° = complete circle, no gap)"""
     
-    genome_circle_linewidth: int = 3
-    """Line width for main genome circle (px)"""
+    genome_circle_linewidth: int = 2
+    """Line width for main genome circle (px) - thinner for subtlety"""
     
-    separator_circle_linewidth: int = 2
-    """Line width for del/dup separator circle (px)"""
+    separator_circle_linewidth: float = 1.0
+    """Line width for del/dup separator circle (px) - subtle dashed line"""
     
-    separator_circle_alpha: float = 0.7
-    """Transparency for separator circle"""
+    separator_circle_alpha: float = 0.4
+    """Transparency for separator circle - more subtle"""
     
     # ============================================================
     # FIGURE SETTINGS

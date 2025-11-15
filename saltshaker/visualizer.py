@@ -155,6 +155,82 @@ class CircularPlotter:
         
         return min(1.0, max(0.0, compressed))
     
+    def _apply_bidirectional_nudge(
+        self,
+        label_deg: float,
+        label_id: str,
+        label_positions: List[Dict],
+        min_separation: float
+    ) -> float:
+        """
+        Apply bidirectional radial nudge if label conflicts with existing labels
+        
+        Handles multiple conflicts by accumulating offsets. When 3+ labels cluster
+        at same angle, creates a "stack" with alternating inward/outward offsets.
+        
+        Args:
+            label_deg: Angular position of new label (degrees)
+            label_id: Identifier of new label (for logging)
+            label_positions: List of existing label positions (modified in-place)
+            min_separation: Minimum angular separation required (degrees)
+        
+        Returns:
+            Radial offset for new label (0 if no conflict, ±nudge_amount if conflict)
+        """
+        radial_offset = 0
+        conflicts_found = []
+        
+        # Find ALL conflicts, not just the first one
+        for i, existing in enumerate(label_positions):
+            # Calculate angular distance with wraparound handling
+            ang_dist = abs(label_deg - existing['deg'])
+            if ang_dist > 180:
+                ang_dist = 360 - ang_dist
+            
+            if ang_dist < min_separation:
+                conflicts_found.append((i, existing, ang_dist))
+        
+        if conflicts_found:
+            # MULTIPLE CONFLICTS: Create a "stack" of labels
+            # Strategy: Alternate between inward/outward based on position in stack
+            nudge_amount = self.config.layout.label_radial_nudge
+            
+            # Count how many labels are already in this cluster
+            cluster_size = len(conflicts_found)
+            
+            # Assign offset based on position in stack
+            # Pattern: 0, +1, -1, +2, -2, +3, -3, ...
+            # This creates: label₀, label₁↑, label₂↓, label₃↑↑, label₄↓↓, ...
+            
+            # New label gets next position in alternating pattern
+            position_in_stack = cluster_size  # 0-indexed, so first conflict = position 1
+            
+            if position_in_stack % 2 == 1:
+                # Odd position → outward
+                radial_offset = nudge_amount * ((position_in_stack + 1) // 2)
+            else:
+                # Even position → inward
+                radial_offset = -nudge_amount * (position_in_stack // 2)
+            
+            # Update existing conflicting labels to spread out
+            for idx, (i, existing, ang_dist) in enumerate(conflicts_found):
+                # Assign position in stack
+                if idx % 2 == 0:
+                    # Even index → outward
+                    existing_offset = nudge_amount * ((idx + 2) // 2)
+                else:
+                    # Odd index → inward
+                    existing_offset = -nudge_amount * ((idx + 1) // 2)
+                
+                # Accumulate offset (don't overwrite if already nudged)
+                current_offset = label_positions[i].get('radial_offset', 0)
+                label_positions[i]['radial_offset'] = existing_offset
+                
+            logger.info(f"  Multi-label nudge: {label_id} {radial_offset:+.1f}px "
+                       f"(cluster of {cluster_size + 1} at ~{label_deg:.1f}°)")
+        
+        return radial_offset
+    
     def group_sort_key(self, group: str) -> Tuple:
         """
         Generate sort key for group names
@@ -749,24 +825,10 @@ class CircularPlotter:
                     event_radius = leftmost_event['radius']
                     event_type = leftmost_event['final_event']
                     
-                    # LIGHTWEIGHT COLLISION RESOLUTION: If still conflicts after trying all candidates,
-                    # apply small radial offset (nudge inward) to create vertical separation
-                    radial_offset = 0
-                    if min_conflict > 0:  # Still has conflict
-                        # Check if there's a nearby label (within min_separation)
-                        for existing in label_positions:
-                            ang_dist = abs(label_deg - existing['deg'])
-                            if ang_dist > 180:
-                                ang_dist = 360 - ang_dist
-                            
-                            if ang_dist < min_separation:
-                                # Apply radial nudge: alternate between inward/outward
-                                # Use group index to alternate direction
-                                nudge_direction = 1 if len(label_positions) % 2 == 0 else -1
-                                radial_offset = nudge_direction * self.config.layout.label_radial_nudge
-                                logger.info(f"  Applying radial nudge {radial_offset}px to {base_group_id} "
-                                          f"(conflict with nearby label at {ang_dist:.1f}°)")
-                                break
+                    # Apply bidirectional nudge if conflicts with existing labels
+                    radial_offset = self._apply_bidirectional_nudge(
+                        label_deg, base_group_id, label_positions, min_separation
+                    )
                     
                     # Label color based on event TYPE (red=del, blue=dup)
                     label_color = del_label_color if event_type == 'del' else dup_label_color
@@ -793,14 +855,21 @@ class CircularPlotter:
                 # Label color based on event TYPE (red=del, blue=dup)
                 label_color = del_label_color if event['final_event'] == 'del' else dup_label_color
                 
+                label_deg = event['deg1']
+                
+                # Apply bidirectional nudge if conflicts with existing labels
+                radial_offset = self._apply_bidirectional_nudge(
+                    label_deg, group_id, label_positions, min_separation
+                )
+                
                 label_positions.append({
-                    'deg': event['deg1'],
+                    'deg': label_deg,
                     'radius': single_event.radius,
-                    'radial_offset': 0,  # No offset for single events (no conflict expected)
+                    'radial_offset': radial_offset,
                     'label': group_id,
                     'color': label_color
                 })
-                logger.info(f"  Single label {group_id}: deg={event['deg1']:.1f}, radius={single_event.radius:.1f}")
+                logger.info(f"  Single label {group_id}: deg={event['deg1']:.1f}, radius={single_event.radius:.1f}, offset={radial_offset}")
 
             # FALLBACK: Label any remaining groups that weren't in bands or single_events
             all_groups = layout_result.events['group'].unique()
