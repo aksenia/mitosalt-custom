@@ -1,5 +1,5 @@
 """
-Unit Tests for EventCaller Helper Functions
+Unit tests for EventCaller helper functions
 
 Tests the static parsing methods that process comma-separated values
 from cluster files.

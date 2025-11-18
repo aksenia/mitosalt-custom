@@ -1,5 +1,5 @@
 """
-Layout Types for SaltShaker
+Layout types for SaltShaker
 Data structures for layout engine results
 
 All types are immutable (frozen) for safety and testability.

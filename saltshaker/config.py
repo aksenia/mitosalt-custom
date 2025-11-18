@@ -1,7 +1,6 @@
 """
-SaltShaker Configuration - SIMPLIFIED VERSION
+SaltShaker configuration
 Clean configuration with only necessary parameters
-NO LEGACY CODE - NO HARDCODED VALUES
 """
 from dataclasses import dataclass, field
 from typing import Tuple, List, Literal, Optional

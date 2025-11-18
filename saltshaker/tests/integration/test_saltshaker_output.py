@@ -1,5 +1,5 @@
 """
-SaltShaker Integration Tests
+SaltShaker integration tests
 
 Validates SaltShaker output against R script ground truth.
 

@@ -1,5 +1,5 @@
 """
-Type Definitions for SaltShaker
+Type definitions for SaltShaker
 
 Common types used throughout the package for type checking and documentation.
 """

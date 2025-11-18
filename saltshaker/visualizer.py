@@ -1,8 +1,7 @@
 """
-Circular visualizer - SIMPLIFIED VERSION
+Circular visualizer for mitochondrial genome events.
 
 Creates circular genome plots for mitochondrial structural alterations.
-All legacy code removed - uses only simplified radial layout.
 """
 
 from __future__ import annotations

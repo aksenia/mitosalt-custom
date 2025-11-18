@@ -1,5 +1,5 @@
 """
-I/O Readers
+I/O readers
 
 Handles reading of various input files.
 """

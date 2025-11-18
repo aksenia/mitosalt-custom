@@ -1,9 +1,8 @@
 """
-Layout Engine for SaltShaker - SIMPLIFIED VERSION
+Layout Engine for SaltShaker
 Pure layout logic with simple radial stacking
 
-Key simplifications:
-- No sector-based allocation (causes bunching)
+Key features:
 - Simple radial stacking from outer to inner
 - Single-pass algorithm
 - Group-aware positioning with consistent spacing
