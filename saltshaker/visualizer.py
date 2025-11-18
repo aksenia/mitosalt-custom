@@ -518,12 +518,15 @@ class CircularPlotter:
         circle_offset = self.config.circle_offset + gene_track_offset + label_offset
         max_plot_radius = genome_radius + circle_offset
         
-        # Draw genome circle at full radius boundary
+        # Draw genome circle at full radius boundary - styled from config
         theta_genome = np.linspace(0, self.config.degrees_per_genome * np.pi / 180, 
                                   self.config.arc_resolution)
         radius_genome = [genome_radius] * len(theta_genome)
-        ax.plot(theta_genome, radius_genome, 'k-', 
-               linewidth=self.config.genome_circle_linewidth)
+        ax.plot(theta_genome, radius_genome, 
+               color=self.config.genome_circle_color,
+               linestyle=self.config.genome_circle_style,
+               linewidth=self.config.genome_circle_linewidth,
+               alpha=self.config.genome_circle_alpha)
         
         # Draw separator circle ONLY if both deletions AND duplications exist
         # When only one event type exists, no separator is needed

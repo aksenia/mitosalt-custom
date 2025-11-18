@@ -196,6 +196,15 @@ class PlotConfig:
     genome_circle_linewidth: int = 2
     """Line width for main genome circle (px) - thinner for subtlety"""
     
+    genome_circle_style: str = '--'
+    """Line style for genome circle: '-' solid, '--' dashed, ':' dotted"""
+    
+    genome_circle_color: str = 'gray'
+    """Color for genome circle: 'k' black, 'gray' gray"""
+    
+    genome_circle_alpha: float = 0.5
+    """Transparency for genome circle (0=invisible, 1=solid)"""
+    
     separator_circle_linewidth: float = 1.0
     """Line width for del/dup separator circle (px) - subtle dashed line"""
     
