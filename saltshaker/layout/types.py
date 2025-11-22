@@ -5,7 +5,7 @@ Data structures for layout engine results
 All types are immutable (frozen) for safety and testability.
 """
 from dataclasses import dataclass, field
-from typing import List, Dict, Tuple, Optional, Literal
+from typing import List, Dict, Tuple, Optional, Literal, Any
 import pandas as pd
 
 
@@ -142,7 +142,7 @@ class LayoutResult:
     dup_radius_range: Tuple[float, float]
     blacklist_radius: float
     layout_algorithm: str
-    layout_stats: Dict[str, any] = field(default_factory=dict)
+    layout_stats: Dict[str, Any] = field(default_factory=dict)
     
     @property
     def n_sectors(self) -> int:

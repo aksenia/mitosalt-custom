@@ -3,7 +3,7 @@ SaltShaker configuration
 Clean configuration with only necessary parameters
 """
 from dataclasses import dataclass, field
-from typing import Tuple, List, Literal, Optional
+from typing import Tuple, List, Literal, Optional, Any
 
 
 @dataclass
@@ -61,6 +61,9 @@ class LayoutConfig:
     max_band_size: int = 200
     """Maximum band size for very large groups (px)"""
     
+    min_viable_band_height: float = 12.0
+    """Minimum height for any group band to be valid (px) - prevents invalid zero-height bands"""
+    
     # ============================================================
     # SPACING
     # ============================================================
@@ -105,6 +108,21 @@ class LayoutConfig:
     
     label_radial_nudge: float = 8.0
     """Radial offset applied to conflicting labels (px) for vertical separation"""
+    
+    # ============================================================
+    # RING LAYOUT
+    # ============================================================
+    min_ring_size: int = 50
+    """Minimum pixels allocated per ring when events exist"""
+    
+    buffer_zone: int = 8
+    """Buffer space around separator circle (px)"""
+    
+    single_event_min_angular_spacing: float = 45.0
+    """Minimum angular separation between single events on shared level (degrees)"""
+    
+    single_event_max_per_level: int = 8
+    """Maximum number of single events per shared radius level"""
 
 
 @dataclass
@@ -117,8 +135,11 @@ class VisualizationConfig:
     # ============================================================
     # ADAPTIVE LINE WIDTH
     # ============================================================
-    adaptive_linewidth_enabled: bool = True
-    """Enable adaptive line width based on local density"""
+    adaptive_linewidth_enabled: bool = False
+    """Enable adaptive line width based on local density (currently disabled, uses fixed width)"""
+    
+    fixed_event_linewidth: float = 2.5
+    """Fixed line width for event arcs when adaptive linewidth is disabled (px)"""
     
     density_window_degrees: float = 30.0
     """Angular window for calculating local density (degrees)"""
@@ -227,6 +248,12 @@ class PlotConfig:
     
     circle_offset: float = 20.0
     """Offset from outermost radius to figure edge (px)"""
+    
+    gene_track_offset: float = 35.0
+    """Space reserved for gene annotation track (px)"""
+    
+    coordinate_label_offset: float = 20.0
+    """Space reserved for coordinate labels (px)"""
     
     # ============================================================
     # PRESET CONFIGURATIONS

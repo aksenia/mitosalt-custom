@@ -5,7 +5,7 @@ Creates circular genome plots for mitochondrial structural alterations.
 """
 
 from __future__ import annotations
-from typing import List, Tuple, Dict, Any, Optional, Callable, Union, Literal
+from typing import List, Tuple, Dict, Any, Optional, Callable, Union, Literal, NamedTuple
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,6 +24,15 @@ from .config import PlotConfig
 from .layout import LayoutEngine
 
 logger = logging.getLogger(__name__)
+
+
+class ColorScaleInfo(NamedTuple):
+    """Color scale information for a category"""
+    min_val: float
+    max_val: float
+    actual_max: float  # Actual max in data (for legend)
+    colormap: LinearSegmentedColormap
+    label_color: str  # 'red' or 'blue' for labels
 
 class CircularPlotter:
     """
@@ -98,13 +107,17 @@ class CircularPlotter:
         
         return in_window.sum()
     
-    def _get_adaptive_linewidth(
+    def _get_event_linewidth(
         self,
         event_position: float,
         all_events: pd.DataFrame
     ) -> float:
         """
-        Calculate adaptive line width based on local density
+        Get line width for event arc
+        
+        Currently returns fixed width from config. Adaptive linewidth based on 
+        local density can be enabled in future by setting 
+        config.visualization.adaptive_linewidth_enabled = True
         
         Args:
             event_position: Angular position of the event
@@ -113,9 +126,143 @@ class CircularPlotter:
         Returns:
             Line width in pixels
         """
-        # Use FIXED line width for consistent appearance - same as outer red arcs
-        # The layout algorithm will handle spacing intelligently
-        return 2.5  # Fixed thickness for all arcs
+        if self.config.visualization.adaptive_linewidth_enabled:
+            # Future: implement adaptive linewidth based on local density
+            density = self._calculate_local_density(event_position, all_events)
+            
+            if density >= self.config.visualization.density_threshold_high:
+                return self.config.visualization.density_linewidth_min
+            elif density >= self.config.visualization.density_threshold_medium:
+                # Linear interpolation
+                ratio = (density - self.config.visualization.density_threshold_medium) / \
+                       (self.config.visualization.density_threshold_high - 
+                        self.config.visualization.density_threshold_medium)
+                return (self.config.visualization.density_linewidth_max - 
+                       (ratio * (self.config.visualization.density_linewidth_max - 
+                                self.config.visualization.density_linewidth_min)))
+            else:
+                return self.config.visualization.density_linewidth_max
+        else:
+            # Fixed width from config
+            return self.config.visualization.fixed_event_linewidth
+    
+    def _create_colormaps(
+        self,
+        del_color: Literal['red', 'blue'],
+        dup_color: Literal['red', 'blue']
+    ) -> Tuple[LinearSegmentedColormap, LinearSegmentedColormap, str, str]:
+        """
+        Create colormaps for deletions and duplications
+        
+        Args:
+            del_color: Color scheme for deletions
+            dup_color: Color scheme for duplications
+            
+        Returns:
+            Tuple of (del_cmap, dup_cmap, del_label_color, dup_label_color)
+        """
+        if del_color == 'red':
+            # From very light red to dark red (no pink)
+            del_cmap = LinearSegmentedColormap.from_list(
+                'deletions', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
+            del_label_color = 'red'
+        else:
+            # From very pale blue to dark blue
+            del_cmap = LinearSegmentedColormap.from_list(
+                'deletions', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
+            del_label_color = 'blue'
+
+        if dup_color == 'red':
+            # From very light red to dark red (no pink)
+            dup_cmap = LinearSegmentedColormap.from_list(
+                'duplications', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
+            dup_label_color = 'red'
+        else:
+            # From very pale blue to dark blue
+            dup_cmap = LinearSegmentedColormap.from_list(
+                'duplications', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
+            dup_label_color = 'blue'
+            
+        return del_cmap, dup_cmap, del_label_color, dup_label_color
+    
+    def _calculate_color_scales(
+        self,
+        dat_processed: pd.DataFrame,
+        scale: Literal['dynamic', 'fixed'],
+        blacklist_regions: Optional[List[BlacklistRegion]],
+        del_cmap: LinearSegmentedColormap,
+        dup_cmap: LinearSegmentedColormap,
+        del_label_color: str,
+        dup_label_color: str
+    ) -> Tuple[ColorScaleInfo, ColorScaleInfo, ColorScaleInfo]:
+        """
+        Calculate color scales for deletions, duplications, and blacklist events
+        
+        Args:
+            dat_processed: Processed events DataFrame
+            scale: 'dynamic' (scale to data) or 'fixed' (0-100%)
+            blacklist_regions: List of blacklist regions (if any)
+            del_cmap: Deletion colormap
+            dup_cmap: Duplication colormap
+            del_label_color: Label color for deletions
+            dup_label_color: Label color for duplications
+            
+        Returns:
+            Tuple of (del_scale, dup_scale, bl_scale) ColorScaleInfo objects
+        """
+        del_events = dat_processed[dat_processed['final_event'] == 'del']
+        dup_events = dat_processed[dat_processed['final_event'] == 'dup']
+        
+        if scale == 'fixed':
+            # Fixed scale: 0-100% range but with optimized gradient
+            del_min, del_max = 0.0, 100.0
+            dup_min, dup_max = 0.0, 100.0
+            bl_min, bl_max = 0.0, 100.0
+            logger.info("Using fixed heteroplasmy scale: 0-100% (gradient optimized for 0-50%)")
+            
+            # Store actual max values for legend indicator
+            del_actual_max = del_events['value'].max() if not del_events.empty else 0
+            dup_actual_max = dup_events['value'].max() if not dup_events.empty else 0
+            if blacklist_regions:
+                bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
+                bl_actual_max = bl_events_temp['value'].max() if not bl_events_temp.empty else 0
+            else:
+                bl_actual_max = 0
+        else:  # dynamic
+            # Dynamic scale: min-max within each category
+            del_max = del_events['value'].max() if not del_events.empty else 0
+            del_min = del_events['value'].min() if not del_events.empty else 0
+            dup_max = dup_events['value'].max() if not dup_events.empty else 0  
+            dup_min = dup_events['value'].min() if not dup_events.empty else 0
+            
+            # Calculate BL min/max for gradient coloring
+            if blacklist_regions:
+                bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
+                if not bl_events.empty:
+                    bl_min = bl_events['value'].min()
+                    bl_max = bl_events['value'].max()
+                else:
+                    bl_min, bl_max = 0, 0
+            else:
+                bl_min, bl_max = 0, 0
+            
+            # For dynamic scale, actual max = scale max
+            del_actual_max = del_max
+            dup_actual_max = dup_max
+            bl_actual_max = bl_max
+            
+            logger.info(f"Dynamic scale - Del: {del_min:.1f}-{del_max:.1f}%, "
+                       f"Dup: {dup_min:.1f}-{dup_max:.1f}%")
+        
+        # Create green colormap for blacklist events
+        bl_cmap = LinearSegmentedColormap.from_list(
+            'bl_green', ['#E6FFE6', '#B3FFB3', '#66FF66', '#32CD32', '#228B22'])
+        
+        return (
+            ColorScaleInfo(del_min, del_max, del_actual_max, del_cmap, del_label_color),
+            ColorScaleInfo(dup_min, dup_max, dup_actual_max, dup_cmap, dup_label_color),
+            ColorScaleInfo(bl_min, bl_max, bl_actual_max, bl_cmap, 'green')
+        )
     
     def _compress_gradient_fixed_scale(self, value: float, vmin: float, vmax: float) -> float:
         """
@@ -154,81 +301,116 @@ class CircularPlotter:
         
         return min(1.0, max(0.0, compressed))
     
-    def _apply_bidirectional_nudge(
+    def _apply_smart_nudge(
         self,
         label_deg: float,
         label_id: str,
+        event_radius: float,
         label_positions: List[Dict],
-        min_separation: float
-    ) -> float:
+        min_angular_separation: float
+    ) -> Tuple[float, float]:
         """
-        Apply bidirectional radial nudge if label conflicts with existing labels
+        Apply smart nudging to avoid label collisions
         
-        Handles multiple conflicts by accumulating offsets. When 3+ labels cluster
-        at same angle, creates a "stack" with alternating inward/outward offsets.
+        Uses BOTH angular (horizontal) and radial (vertical) nudging:
+        1. First tries angular nudge (shift along arc)
+        2. If still conflicts, tries radial nudge (move in/out)
+        3. For dense clusters (3+), creates progressive stacks
+        
+        This solves the sequential problem: adjusting one label doesn't
+        create new conflicts because we check ALL existing positions.
         
         Args:
             label_deg: Angular position of new label (degrees)
             label_id: Identifier of new label (for logging)
-            label_positions: List of existing label positions (modified in-place)
-            min_separation: Minimum angular separation required (degrees)
+            event_radius: Radius of the event this label belongs to
+            label_positions: List of existing label positions
+            min_angular_separation: Minimum angular separation (degrees)
         
         Returns:
-            Radial offset for new label (0 if no conflict, ±nudge_amount if conflict)
+            Tuple of (angular_offset_deg, radial_offset_px)
         """
-        radial_offset = 0
-        conflicts_found = []
+        angular_offset = 0.0
+        radial_offset = 0.0
         
-        # Find ALL conflicts, not just the first one
+        # Find ALL conflicts
+        conflicts = []
         for i, existing in enumerate(label_positions):
-            # Calculate angular distance with wraparound handling
-            ang_dist = abs(label_deg - existing['deg'])
-            if ang_dist > 180:
-                ang_dist = 360 - ang_dist
+            ang_dist = self._angular_distance(label_deg, existing['deg'])
             
-            if ang_dist < min_separation:
-                conflicts_found.append((i, existing, ang_dist))
+            # Also check if they're at similar radii (within 30px)
+            rad_dist = abs(event_radius - existing['radius'])
+            
+            if ang_dist < min_angular_separation and rad_dist < 30:
+                conflicts.append((i, existing, ang_dist, rad_dist))
         
-        if conflicts_found:
-            # MULTIPLE CONFLICTS: Create a "stack" of labels
-            # Strategy: Alternate between inward/outward based on position in stack
-            nudge_amount = self.config.layout.label_radial_nudge
+        if not conflicts:
+            return (0.0, 0.0)  # No conflicts!
+        
+        # STRATEGY: Try different nudge strategies
+        nudge_amount_angular = min_angular_separation * 0.6  # 60% of min separation
+        nudge_amount_radial = self.config.layout.label_radial_nudge
+        
+        cluster_size = len(conflicts)
+        
+        if cluster_size == 1:
+            # SINGLE CONFLICT: Try angular nudge first (simpler, cleaner)
+            conflict_deg = conflicts[0][1]['deg']
             
-            # Count how many labels are already in this cluster
-            cluster_size = len(conflicts_found)
+            # Nudge away from conflict
+            if label_deg < conflict_deg:
+                angular_offset = -nudge_amount_angular  # Move left
+            else:
+                angular_offset = +nudge_amount_angular  # Move right
             
-            # Assign offset based on position in stack
+            # Check if angular nudge solves it
+            new_deg = label_deg + angular_offset
+            still_conflicts = any(
+                self._angular_distance(new_deg, ex['deg']) < min_angular_separation * 0.8
+                for ex in label_positions
+            )
+            
+            if still_conflicts:
+                # Angular didn't work, use radial instead
+                angular_offset = 0.0
+                radial_offset = nudge_amount_radial
+                logger.info(f"  Single conflict: {label_id} radial nudge {radial_offset:+.1f}px")
+            else:
+                logger.info(f"  Single conflict: {label_id} angular nudge {angular_offset:+.1f}°")
+        
+        else:
+            # MULTIPLE CONFLICTS (3+ labels clustered): Use progressive stacking
             # Pattern: 0, +1, -1, +2, -2, +3, -3, ...
-            # This creates: label₀, label₁↑, label₂↓, label₃↑↑, label₄↓↓, ...
-            
-            # New label gets next position in alternating pattern
-            position_in_stack = cluster_size  # 0-indexed, so first conflict = position 1
+            position_in_stack = cluster_size
             
             if position_in_stack % 2 == 1:
                 # Odd position → outward
-                radial_offset = nudge_amount * ((position_in_stack + 1) // 2)
+                radial_offset = nudge_amount_radial * ((position_in_stack + 1) // 2)
             else:
                 # Even position → inward
-                radial_offset = -nudge_amount * (position_in_stack // 2)
+                radial_offset = -nudge_amount_radial * (position_in_stack // 2)
+            
+            # Also try small angular nudge for dense clusters
+            angular_offset = (position_in_stack % 3 - 1) * (nudge_amount_angular * 0.3)
             
             # Update existing conflicting labels to spread out
-            for idx, (i, existing, ang_dist) in enumerate(conflicts_found):
-                # Assign position in stack
+            for idx, (i, existing, ang_dist, rad_dist) in enumerate(conflicts):
                 if idx % 2 == 0:
-                    # Even index → outward
-                    existing_offset = nudge_amount * ((idx + 2) // 2)
+                    existing_offset = nudge_amount_radial * ((idx + 2) // 2)
                 else:
-                    # Odd index → inward
-                    existing_offset = -nudge_amount * ((idx + 1) // 2)
+                    existing_offset = -nudge_amount_radial * ((idx + 1) // 2)
                 
-                # Accumulate offset (don't overwrite if already nudged)
-                current_offset = label_positions[i].get('radial_offset', 0)
                 label_positions[i]['radial_offset'] = existing_offset
-                
-            logger.info(f"  Multi-label nudge: {label_id} {radial_offset:+.1f}px "
-                       f"(cluster of {cluster_size + 1} at ~{label_deg:.1f}°)")
+            
+            logger.info(f"  Multi-label nudge: {label_id} radial={radial_offset:+.1f}px, "
+                       f"angular={angular_offset:+.1f}° (cluster of {cluster_size + 1})")
         
-        return radial_offset
+        return (angular_offset, radial_offset)
+    
+    def _angular_distance(self, deg1: float, deg2: float) -> float:
+        """Calculate minimum angular distance between two angles"""
+        diff = abs(deg1 - deg2)
+        return min(diff, 360 - diff)
     
     def group_sort_key(self, group: str) -> Tuple:
         """
@@ -337,28 +519,9 @@ class CircularPlotter:
         
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
-        # Set color maps based on parameters - with stronger gradients
-        if del_color == 'red':
-            # From very light red to dark red (no pink)
-            self.del_cmap = LinearSegmentedColormap.from_list(
-                'deletions', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
-            del_label_color = 'red'
-        else:
-            # From very pale blue to dark blue
-            self.del_cmap = LinearSegmentedColormap.from_list(
-                'deletions', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
-            del_label_color = 'blue'
-
-        if dup_color == 'red':
-            # From very light red to dark red (no pink)
-            self.dup_cmap = LinearSegmentedColormap.from_list(
-                'duplications', ['#FFCCCC', '#FF9999', '#FF6666', '#CC0000', '#660000'])
-            dup_label_color = 'red'
-        else:
-            # From very pale blue to dark blue
-            self.dup_cmap = LinearSegmentedColormap.from_list(
-                'duplications', ['#E6F3FF', '#B3D9FF', '#66B2FF', '#0066CC', '#003366'])
-            dup_label_color = 'blue'
+        # Create colormaps using extracted method
+        self.del_cmap, self.dup_cmap, del_label_color, dup_label_color = \
+            self._create_colormaps(del_color, dup_color)
         
         # Create data structure for plotting
         dat = pd.DataFrame({
@@ -431,6 +594,15 @@ class CircularPlotter:
             dat_dup,
             self.config.layout.total_radius
         )
+        
+        # Use actual radius from layout (may be expanded if space was insufficient)
+        actual_radius = layout_result.total_radius_used
+        if actual_radius > self.config.layout.total_radius:
+            logger.info(f"Layout expanded radius from {self.config.layout.total_radius:.1f}px "
+                       f"to {actual_radius:.1f}px to fit all groups")
+        
+        # Use actual_radius for all downstream calculations
+        genome_radius = actual_radius
 
         # Extract events with assigned radii from layout engine
         # Note: Margin enforcement is now handled in engine.py, not here
@@ -446,52 +618,20 @@ class CircularPlotter:
 
         dat_processed = pd.concat([dat_del, dat_dup], ignore_index=False)
         
-        # Calculate color scales
+        # Calculate color scales using extracted method
+        del_scale, dup_scale, bl_scale = self._calculate_color_scales(
+            dat_processed, scale, blacklist_regions,
+            self.del_cmap, self.dup_cmap, del_label_color, dup_label_color
+        )
+        
+        # Unpack for backward compatibility with existing code
+        del_min, del_max, del_actual_max = del_scale.min_val, del_scale.max_val, del_scale.actual_max
+        dup_min, dup_max, dup_actual_max = dup_scale.min_val, dup_scale.max_val, dup_scale.actual_max
+        bl_min, bl_max, bl_actual_max = bl_scale.min_val, bl_scale.max_val, bl_scale.actual_max
+        
+        # Keep del_events and dup_events for later use in the method
         del_events = dat_processed[dat_processed['final_event'] == 'del']
         dup_events = dat_processed[dat_processed['final_event'] == 'dup']
-        
-        if scale == 'fixed':
-            # Fixed scale: 0-100% range but with optimized gradient
-            # 0-50% uses full color range for better visibility
-            # 50-100% uses compressed dark shades (rare but theoretically possible)
-            del_min, del_max = 0.0, 100.0
-            dup_min, dup_max = 0.0, 100.0
-            bl_min, bl_max = 0.0, 100.0
-            logger.info("Using fixed heteroplasmy scale: 0-100% (gradient optimized for 0-50%)")
-            
-            # Store actual max values for legend indicator
-            del_actual_max = del_events['value'].max() if not del_events.empty else 0
-            dup_actual_max = dup_events['value'].max() if not dup_events.empty else 0
-            if blacklist_regions:
-                bl_events_temp = dat_processed[dat_processed['blacklist_crossing'] == True]
-                bl_actual_max = bl_events_temp['value'].max() if not bl_events_temp.empty else 0
-            else:
-                bl_actual_max = 0
-        else:  # dynamic
-            # Dynamic scale: min-max within each category
-            del_max = del_events['value'].max() if not del_events.empty else 0
-            del_min = del_events['value'].min() if not del_events.empty else 0
-            dup_max = dup_events['value'].max() if not dup_events.empty else 0  
-            dup_min = dup_events['value'].min() if not dup_events.empty else 0
-            
-            # Calculate BL min/max for gradient coloring
-            if blacklist_regions:
-                bl_events = dat_processed[dat_processed['blacklist_crossing'] == True]
-                if not bl_events.empty:
-                    bl_min = bl_events['value'].min()
-                    bl_max = bl_events['value'].max()
-                else:
-                    bl_min, bl_max = 0, 0
-            else:
-                bl_min, bl_max = 0, 0
-            
-            # For dynamic scale, actual max = scale max
-            del_actual_max = del_max
-            dup_actual_max = dup_max
-            bl_actual_max = bl_max
-            
-            logger.info(f"Dynamic scale - Del: {del_min:.1f}-{del_max:.1f}%, "
-                       f"Dup: {dup_min:.1f}-{dup_max:.1f}%")
 
         # Create figure
         if figsize is None:
@@ -509,11 +649,11 @@ class CircularPlotter:
         
         # Calculate radius info
         blacklist_radius = layout_result.blacklist_radius
-        genome_radius = self.config.layout.total_radius  # Genome circle at full boundary
+        # genome_radius already set from layout_result.total_radius_used above
         
-        # Add offset for gene track and labels
-        gene_track_offset = 35  # Space for gene track (15px track + margins)
-        label_offset = 20       # Space for coordinate labels
+        # Add offset for gene track and labels (from config)
+        gene_track_offset = self.config.gene_track_offset
+        label_offset = self.config.coordinate_label_offset
         circle_offset = self.config.circle_offset + gene_track_offset + label_offset
         max_plot_radius = genome_radius + circle_offset
         
@@ -584,7 +724,7 @@ class CircularPlotter:
             alpha = self.config.visualization.alpha_min + (norm_value * self.config.visualization.alpha_range)
             
             # Get line width
-            linewidth = self._get_adaptive_linewidth(row['deg1'], dat_processed)
+            linewidth = self._get_event_linewidth(row['deg1'], dat_processed)
             
             # Draw arc at assigned radius (no overlay!)
             ax.plot(theta_arc, radius_arc, color=color, 
@@ -635,7 +775,7 @@ class CircularPlotter:
             alpha = self.config.visualization.alpha_min + (norm_value * self.config.visualization.alpha_range)
             
             # Get line width
-            linewidth = self._get_adaptive_linewidth(row['deg1'], dat_processed)
+            linewidth = self._get_event_linewidth(row['deg1'], dat_processed)
             
             # Draw arc at assigned radius (no overlay!)
             ax.plot(theta_arc, radius_arc, color=color, 
@@ -779,6 +919,9 @@ class CircularPlotter:
             seen_groups = set()  # Track which groups we've already labeled
             label_positions = []
             
+            # Define min_separation once at top level for all label positioning
+            min_separation = self.config.layout.label_min_angular_separation
+            
             # Add labels for multi-event group bands (ONE per group)
             for group_band in layout_result.group_bands:
                 if group_band.n_events > 0:
@@ -794,8 +937,6 @@ class CircularPlotter:
                     
                     best_idx = None
                     min_conflict = float('inf')
-                    
-                    min_separation = self.config.layout.label_min_angular_separation
                     
                     for idx in candidate_indices:
                         event = layout_result.events.loc[idx]
@@ -827,9 +968,9 @@ class CircularPlotter:
                     event_radius = leftmost_event['radius']
                     event_type = leftmost_event['final_event']
                     
-                    # Apply bidirectional nudge if conflicts with existing labels
-                    radial_offset = self._apply_bidirectional_nudge(
-                        label_deg, base_group_id, label_positions, min_separation
+                    # Apply smart nudge (both angular and radial)
+                    angular_offset, radial_offset = self._apply_smart_nudge(
+                        label_deg, base_group_id, event_radius, label_positions, min_separation
                     )
                     
                     # Label color based on event TYPE (red=del, blue=dup)
@@ -837,16 +978,17 @@ class CircularPlotter:
                     
                     label_positions.append({
                         'deg': label_deg,
+                        'angular_offset': angular_offset,  # NEW: angular shift
                         'radius': event_radius,
-                        'radial_offset': radial_offset,  # Store offset for rendering
-                        'label': base_group_id,  # Use base group ID only
+                        'radial_offset': radial_offset,
+                        'label': base_group_id,
                         'color': label_color
                     })
                     logger.info(f"  Band label {base_group_id}: deg={label_deg:.1f}, radius={event_radius:.1f}, type={event_type}, conflict={min_conflict:.1f}")
             
             # Add labels for single-event groups (if not already labeled)
             for single_event in layout_result.single_events:
-                event = layout_result.events.iloc[single_event.event_index]
+                event = layout_result.events.loc[single_event.event_index]  # Use .loc for index, not .iloc
                 group_id = event['group']
                 
                 # Skip if already labeled
@@ -858,26 +1000,34 @@ class CircularPlotter:
                 label_color = del_label_color if event['final_event'] == 'del' else dup_label_color
                 
                 label_deg = event['deg1']
+                event_radius = single_event.radius
                 
-                # Apply bidirectional nudge if conflicts with existing labels
-                radial_offset = self._apply_bidirectional_nudge(
-                    label_deg, group_id, label_positions, min_separation
+                # Apply smart nudge (both angular and radial)
+                angular_offset, radial_offset = self._apply_smart_nudge(
+                    label_deg, group_id, event_radius, label_positions, min_separation
                 )
                 
                 label_positions.append({
                     'deg': label_deg,
-                    'radius': single_event.radius,
+                    'angular_offset': angular_offset,
+                    'radius': event_radius,
                     'radial_offset': radial_offset,
                     'label': group_id,
                     'color': label_color
                 })
-                logger.info(f"  Single label {group_id}: deg={event['deg1']:.1f}, radius={single_event.radius:.1f}, offset={radial_offset}")
+                logger.info(f"  Single label {group_id}: deg={event['deg1']:.1f}, radius={single_event.radius:.1f}, ang_offset={angular_offset:.1f}, rad_offset={radial_offset:.1f}")
 
             # FALLBACK: Label any remaining groups that weren't in bands or single_events
+            # NOTE: With the new auto-expanding layout system, this should NEVER occur.
+            # If fallbacks are being created, it indicates a bug in the layout engine.
             all_groups = layout_result.events['group'].unique()
             for group_id in all_groups:
                 if group_id in seen_groups:
                     continue
+                
+                # This shouldn't happen - log as error
+                logger.error(f"UNEXPECTED FALLBACK: Group {group_id} not in layout! "
+                           f"This indicates a layout engine bug.")
                 
                 # Find representative event for this group from layout_result.events
                 group_events = layout_result.events[layout_result.events['group'] == group_id]
@@ -889,15 +1039,25 @@ class CircularPlotter:
                     # Label color based on event TYPE (red=del, blue=dup)
                     label_color = del_label_color if leftmost_event['final_event'] == 'del' else dup_label_color
                     
+                    label_deg = leftmost_event['deg1']
+                    event_radius = leftmost_event['radius']
+                    
+                    # Apply smart nudge for fallback labels too
+                    angular_offset, radial_offset = self._apply_smart_nudge(
+                        label_deg, group_id, event_radius, label_positions, min_separation
+                    )
+                    
                     seen_groups.add(group_id)
                     label_positions.append({
-                        'deg': leftmost_event['deg1'],
-                        'radius': leftmost_event['radius'],
-                        'radial_offset': 0,  # No offset for fallback
+                        'deg': label_deg,
+                        'angular_offset': angular_offset,
+                        'radius': event_radius,
+                        'radial_offset': radial_offset,
                         'label': group_id,
                         'color': label_color
                     })
-                    logger.info(f"Added fallback label for group {group_id} (not in layout bands)")
+                    logger.warning(f"Created fallback label for group {group_id} at deg={label_deg:.1f}, "
+                                 f"radius={event_radius:.1f} (layout engine should have handled this)")
             
             # Log all labels being drawn
             logger.info(f"Drawing {len(label_positions)} group labels: {[p['label'] for p in label_positions]}")
@@ -909,9 +1069,13 @@ class CircularPlotter:
                 logger.info(f"  {pos['label']}: deg={pos['deg']:.2f}, radius={pos['radius']:.2f}, color={pos['color']}")
                 
             for pos in label_positions:
-                theta = np.radians(pos['deg'])
+                # Apply angular offset (shift along arc)
+                angular_offset_deg = pos.get('angular_offset', 0)
+                actual_deg = pos['deg'] + angular_offset_deg
+                theta = np.radians(actual_deg)
+                
                 event_radius = pos['radius']
-                radial_offset = pos.get('radial_offset', 0)  # Get offset if present
+                radial_offset = pos.get('radial_offset', 0)
                 
                 # Keep labels inside plot area with margin
                 label_offset = 12
@@ -921,14 +1085,16 @@ class CircularPlotter:
                 label_radius = min(event_radius + label_offset + radial_offset, max_label_radius)
                 
                 # Draw thin pointer line from event to label using config
-                ax.plot([theta, theta], 
+                # Line starts at original event position
+                event_theta = np.radians(pos['deg'])
+                ax.plot([event_theta, theta], 
                        [event_radius + 1, label_radius - 3],
                        color='gray', 
                        linewidth=self.config.layout.label_connector_linewidth, 
                        alpha=0.6, zorder=100)  # High z-order
                 
-                # Draw small marker at event position
-                ax.plot(theta, event_radius, 'o', 
+                # Draw small marker at event position (original, not nudged)
+                ax.plot(event_theta, event_radius, 'o', 
                        markersize=1.5, color='gray', alpha=0.8, zorder=101)
                 
                 # Add label with clean colored box - using config parameters

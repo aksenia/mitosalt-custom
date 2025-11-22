@@ -9,7 +9,7 @@ Key features:
 - No dynamic expansion or complex budgets
 """
 from __future__ import annotations
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any, TypedDict
 from dataclasses import dataclass
 import pandas as pd
 import numpy as np
@@ -22,8 +22,16 @@ from .types import (
     GroupBandLayout,
     SingleEventLayout
 )
+from ..config import PlotConfig
 
 logger = logging.getLogger(__name__)
+
+
+# Type definition for layout return dictionary
+class RingLayoutResult(TypedDict):
+    """Type definition for ring layout return value"""
+    group_bands: List[GroupBandLayout]
+    single_events: List[SingleEventLayout]
 
 
 class LayoutEngine:
@@ -37,40 +45,128 @@ class LayoutEngine:
     4. Single events share radius levels when possible
     """
     
-    def __init__(self, config, genome_length: int = 16569):
+    def __init__(self, config: PlotConfig, genome_length: int = 16569):
         """
         Initialize layout engine
         
         Args:
-            config: Plot configuration
+            config: Plot configuration (must be PlotConfig instance)
             genome_length: Mitochondrial genome length (bp)
+            
+        Raises:
+            TypeError: If config is not a PlotConfig instance
+            ValueError: If genome_length is invalid
         """
+        if not isinstance(config, PlotConfig):
+            raise TypeError(f"config must be PlotConfig instance, got {type(config)}")
+        if genome_length <= 0:
+            raise ValueError(f"genome_length must be positive, got {genome_length}")
+            
         self.config = config
         self.layout_config = config.layout
         self.genome_length = genome_length
         
         logger.info(f"LayoutEngine initialized (simplified radial stacking)")
     
+    def _calculate_required_space(self, events: pd.DataFrame, event_type: str) -> float:
+        """
+        Calculate actual space required for events in a ring
+        
+        This calculates space based on:
+        - Number and size of multi-event groups (bands)
+        - Number of single events (shared levels)
+        - Gaps between groups
+        
+        Args:
+            events: Events to calculate space for
+            event_type: 'del' or 'dup' for logging
+            
+        Returns:
+            Required space in pixels
+        """
+        if events.empty:
+            return 0.0
+        
+        # Separate multi-event groups from single events
+        group_counts = events['group'].value_counts().to_dict()
+        
+        # Multi-event groups: 2+ events OR any BL group
+        multi_groups = [g for g, c in group_counts.items() if c > 1 or g.startswith('BL')]
+        single_groups = [g for g, c in group_counts.items() if c == 1 and not g.startswith('BL')]
+        
+        total_space = 0.0
+        band_details = []
+        
+        # Space for multi-event group bands
+        for group_id in multi_groups:
+            n_events = group_counts[group_id]
+            band_size = self._calculate_band_size(n_events)
+            # Ensure minimum viable height
+            band_size = max(band_size, self.layout_config.min_viable_band_height)
+            total_space += band_size
+            total_space += self.layout_config.group_gap  # Gap after each group
+            band_details.append(f"{group_id}={band_size:.1f}px")
+        
+        # Space for single events (shared levels)
+        single_space = 0.0
+        if single_groups:
+            # More realistic estimate: assume we can pack singles based on angular spacing
+            # With 360° and min 45° spacing, max ~8 events per level
+            # But be conservative: assume 4-6 per level on average
+            max_per_level = self.layout_config.single_event_max_per_level
+            n_singles = len(single_groups)
+            n_levels = max(1, (n_singles + max_per_level - 1) // max_per_level)  # Ceiling division
+            
+            # Each level needs minimum height for a band
+            space_per_level = max(
+                self.layout_config.min_viable_band_height,
+                self.layout_config.group_gap * 2  # Conservative: 2 gaps worth
+            )
+            single_space = n_levels * space_per_level
+            
+            # SMART VISIBILITY: If ONLY singles (no multi-event groups), use larger minimum
+            # This ensures single-event-only plots are visible and don't look tiny
+            if not multi_groups:
+                min_visible_radius = 150.0  # Minimum for good visibility
+                single_space = max(single_space, min_visible_radius)
+                logger.debug(f"  Single-only layout: using minimum {min_visible_radius:.1f}px for visibility")
+            
+            total_space += single_space
+        
+        logger.info(f"Required space for {event_type}: {len(multi_groups)} groups + "
+                   f"{len(single_groups)} singles = {total_space:.1f}px")
+        logger.debug(f"  Multi-event bands: {', '.join(band_details) if band_details else 'none'}")
+        logger.debug(f"  Singles: {len(single_groups)} events, {n_levels if single_groups else 0} levels, "
+                    f"{single_space:.1f}px")
+        
+        return total_space
+    
     def calculate_layout(
         self,
         del_events: pd.DataFrame,
         dup_events: pd.DataFrame,
-        total_radius: float
+        requested_radius: float
     ) -> LayoutResult:
         """
-        Calculate layout for all events
+        Calculate layout for all events with automatic radius expansion
+        
+        This method ensures ALL groups get valid bands by expanding total_radius
+        if the requested radius is insufficient. NO fallback labels, NO invalid bands.
+        
+        NOTE: This method modifies del_events and dup_events in-place by adding
+        a 'radius' column. If you need to preserve original data, pass copies.
         
         Args:
-            del_events: DataFrame with deletion events
-            dup_events: DataFrame with duplication events  
-            total_radius: Total radius available (px)
+            del_events: DataFrame with deletion events (modified in-place)
+            dup_events: DataFrame with duplication events (modified in-place)
+            requested_radius: Requested total radius (will be expanded if needed)
         
         Returns:
-            LayoutResult with all positions calculated
+            LayoutResult with all positions calculated and actual total_radius used
         """
         logger.info(f"Calculating layout for {len(del_events)} dels, {len(dup_events)} dups")
         
-        # Ensure events have required columns
+        # Ensure events have required columns (modifying in-place)
         for df in [del_events, dup_events]:
             if not df.empty and 'radius' not in df.columns:
                 df['radius'] = 0.0
@@ -91,48 +187,105 @@ class LayoutEngine:
         logger.info(f"Ring assignment: {outer_type} outer ({len(outer_events)} events), "
                    f"{inner_type} inner ({len(inner_events)} events)")
         
-        # Step 2: Calculate separator position
-        separator_size = total_radius * self.layout_config.separator_fraction
-        available_radius = total_radius - separator_size
-        
-        # Allocate radius proportionally to event counts  
+        # Step 2: Calculate separator position and required space
         total_events = len(outer_events) + len(inner_events)
         if total_events == 0:
-            return self._create_empty_layout(total_radius)
+            return self._create_empty_layout(requested_radius)
         
-        # Give each ring space proportional to its event count
-        outer_fraction = len(outer_events) / total_events if total_events > 0 else 0.5
-        inner_fraction = 1.0 - outer_fraction
+        # Calculate space requirements for each ring
+        outer_required = self._calculate_required_space(outer_events, outer_type)
+        inner_required = self._calculate_required_space(inner_events, inner_type)
         
-        # Ensure minimum space for each ring if it has events
-        min_ring_size = 50  # Minimum pixels per ring
-        outer_radius = max(available_radius * outer_fraction, 
-                          min_ring_size if len(outer_events) > 0 else 0)
-        inner_radius = max(available_radius * inner_fraction,
-                          min_ring_size if len(inner_events) > 0 else 0)
+        # Calculate total radius needed INCLUDING separator and buffers
+        buffer_zone = self.layout_config.buffer_zone
         
-        # Normalize if total exceeds available
-        if outer_radius + inner_radius > available_radius:
-            scale = available_radius / (outer_radius + inner_radius)
-            outer_radius *= scale
-            inner_radius *= scale
+        # The separator is a FRACTION of the total radius (default 15%)
+        # So if separator_fraction = 0.15, then:
+        # - 15% of radius is separator
+        # - 85% of radius is for events
+        # Therefore: events_space = total_radius * (1 - separator_fraction)
+        # Solving for total_radius: total_radius = events_space / (1 - separator_fraction)
         
-        # Calculate ring ranges with buffer zones around separator circle
-        buffer_zone = 8  # pixels of buffer around separator circle
-        outer_range = (separator_size + inner_radius + buffer_zone, total_radius - buffer_zone)
-        inner_range = (separator_size + buffer_zone, separator_size + inner_radius - buffer_zone)
+        events_space_needed = outer_required + inner_required
         
-        # FIX: Blacklist radius should be at the boundary between rings (separator circle)
-        # This is where the blacklist regions will be drawn
-        blacklist_radius = separator_size + inner_radius  # = outer_range[0] - buffer_zone
+        # Calculate total radius to accommodate events + separator as fraction
+        # Add buffers: 3x buffer (inner edge, both sides of separator, outer edge)
+        radius_for_events_and_separator = events_space_needed / (1.0 - self.layout_config.separator_fraction)
+        total_radius_needed = radius_for_events_and_separator + (3 * buffer_zone)
+        
+        # Use the larger of requested or required
+        actual_total_radius = max(requested_radius, total_radius_needed)
+        
+        if actual_total_radius > requested_radius:
+            expansion_factor = actual_total_radius / requested_radius
+            logger.warning(f"Expanding radius: requested={requested_radius:.1f}px, "
+                         f"needed={total_radius_needed:.1f}px, using={actual_total_radius:.1f}px "
+                         f"(expansion={expansion_factor:.2f}x)")
+        else:
+            logger.info(f"Sufficient space: requested={requested_radius:.1f}px, "
+                       f"needed={total_radius_needed:.1f}px")
+        
+        # Now calculate actual separator size and ring allocations from actual_total_radius
+        available_for_events_and_separator = actual_total_radius - (3 * buffer_zone)
+        separator_size = available_for_events_and_separator * self.layout_config.separator_fraction
+        available_for_events = available_for_events_and_separator - separator_size
+        
+        # CRITICAL: Use the REQUIRED space directly, don't scale it down
+        # The whole point of expanding the radius was to give events their required space!
+        outer_radius = outer_required
+        inner_radius = inner_required
+        
+        # Verify we actually have enough space (should always be true after expansion)
+        if outer_radius + inner_radius > available_for_events:
+            logger.error(f"SPACE CALCULATION BUG: Required {outer_radius + inner_radius:.1f}px "
+                        f"but only have {available_for_events:.1f}px available. "
+                        f"This should never happen after radius expansion!")
+        
+        logger.info(f"Space allocation: {outer_type}={outer_radius:.1f}px, "
+                   f"{inner_type}={inner_radius:.1f}px, separator={separator_size:.1f}px")
+        
+        
+        # Calculate ring ranges with proper space allocation
+        # Layout from bottom to top:
+        # [buffer] [inner_ring] [buffer] [separator] [buffer] [outer_ring] [buffer]
+        
+        buffer_zone = self.layout_config.buffer_zone
+        
+        # Calculate positions from bottom up
+        current_pos = buffer_zone  # Start after bottom buffer
+        
+        # Inner ring
+        inner_start = current_pos
+        inner_end = inner_start + inner_radius
+        current_pos = inner_end + buffer_zone  # Add buffer after inner ring
+        
+        # Separator (centered in its allocated space)
+        separator_start = current_pos
+        separator_circle_radius = separator_start + (separator_size / 2)  # Middle of separator
+        current_pos = separator_start + separator_size + buffer_zone  # Add buffer after separator
+        
+        # Outer ring
+        outer_start = current_pos
+        outer_end = outer_start + outer_radius
+        
+        # Define ranges (min, max) for layout
+        inner_range = (inner_start, inner_end)
+        outer_range = (outer_start, outer_end)
+        
+        # Blacklist radius IS the separator circle (middle of separator band)
+        blacklist_radius = separator_circle_radius
         
         logger.info(f"Outer ring ({outer_type}): {outer_range[0]:.1f}-{outer_range[1]:.1f} px (buffered)")
         logger.info(f"Inner ring ({inner_type}): {inner_range[0]:.1f}-{inner_range[1]:.1f} px (buffered)")
-        logger.info(f"Blacklist separator radius: {blacklist_radius:.1f} px")
+        logger.info(f"Blacklist separator radius: {blacklist_radius:.1f} px (buffer={buffer_zone}px)")
+        logger.info(f"  -> Outer events: {outer_range[0]:.1f}px to {outer_range[1]:.1f}px")
+        logger.info(f"  -> Separator at: {blacklist_radius:.1f}px")
+        logger.info(f"  -> Inner events: {inner_range[0]:.1f}px to {inner_range[1]:.1f}px")
         
-        # Step 3: Layout each ring
+        # Step 3: Layout each ring with guaranteed sufficient space
         outer_layout = self._layout_events_in_ring(outer_events, outer_range, outer_type)
         inner_layout = self._layout_events_in_ring(inner_events, inner_range, inner_type)
+        
         
         # Step 4: Combine results
         all_events = pd.concat([outer_events, inner_events], ignore_index=False)
@@ -157,16 +310,19 @@ class LayoutEngine:
             sector_budgets={},  # No sectors in simplified version
             group_bands=all_group_bands,
             single_events=all_single_events,
-            total_radius_used=total_radius_used,
+            total_radius_used=actual_total_radius,  # Use actual radius (may be expanded)
             del_radius_range=del_radius_range,
             dup_radius_range=dup_radius_range,
             blacklist_radius=blacklist_radius,
-            layout_algorithm='simplified_radial',
+            layout_algorithm='simplified_radial_with_expansion',
             layout_stats={
                 'outer_type': outer_type,
                 'inner_type': inner_type,
                 'n_group_bands': len(all_group_bands),
-                'n_single_events': len(all_single_events)
+                'n_single_events': len(all_single_events),
+                'requested_radius': requested_radius,
+                'actual_radius': actual_total_radius,
+                'radius_expanded': actual_total_radius > requested_radius
             }
         )
     
@@ -175,7 +331,7 @@ class LayoutEngine:
         events: pd.DataFrame,
         radius_range: Tuple[float, float],
         event_type: str
-    ) -> Dict:
+    ) -> RingLayoutResult:
         """
         Layout all events within a ring using simple stacking
         
@@ -185,7 +341,7 @@ class LayoutEngine:
             event_type: 'del' or 'dup' for logging
         
         Returns:
-            Dict with 'group_bands' and 'single_events'
+            RingLayoutResult with 'group_bands' and 'single_events' lists
         """
         if events.empty:
             return {'group_bands': [], 'single_events': []}
@@ -198,6 +354,11 @@ class LayoutEngine:
         # even if they have only 1 event, for visibility
         group_counts = events['group'].value_counts().to_dict()
         
+        # Critical diagnostic: log ALL groups in this ring
+        logger.info(f"=== {event_type.upper()} RING GROUPS ===")
+        for group_id, count in sorted(group_counts.items()):
+            logger.info(f"  {group_id}: {count} event(s)")
+        
         # Multi-event groups: 2+ events OR any BL group (even with 1 event)
         multi_groups = sorted(
             [g for g, c in group_counts.items() if c > 1 or g.startswith('BL')],
@@ -209,6 +370,9 @@ class LayoutEngine:
         
         logger.info(f"Ring for {event_type}: {len(multi_groups)} multi-event groups "
                    f"(including BL groups), {len(single_groups)} single events")
+        logger.info(f"  Multi-event groups: {multi_groups}")
+        logger.info(f"  Single-event groups: {single_groups}")
+        logger.info(f"  Available space: {available_space:.1f}px ({min_radius:.1f} to {max_radius:.1f})")
         
         group_bands = []
         current_radius = max_radius  # Start from outer edge
@@ -222,14 +386,30 @@ class LayoutEngine:
             # Calculate band size
             band_size = self._calculate_band_size(n_events)
             
-            # Check if we have space
-            if current_radius - band_size < min_radius:
-                # Compress band to fit
-                band_size = max(current_radius - min_radius, n_events * 2.0)
-                logger.warning(f"Group {group_id} compressed to fit: {band_size:.1f} px")
+            # Ensure band meets minimum viable height
+            min_viable = self.layout_config.min_viable_band_height
+            if band_size < min_viable:
+                band_size = min_viable
+                logger.debug(f"Group {group_id}: increased band to minimum viable {min_viable:.1f}px")
             
+            # Calculate band bounds
             band_top = current_radius
-            band_bottom = max(band_top - band_size, min_radius)
+            band_bottom = band_top - band_size
+            
+            # Validate band - this should NEVER fail with proper space allocation
+            if band_bottom < min_radius:
+                logger.error(f"LAYOUT FAILURE: Group {group_id} exceeds available space. "
+                           f"Required band bottom={band_bottom:.1f}px < min_radius={min_radius:.1f}px. "
+                           f"This indicates a bug in space calculation.")
+                # Clamp to minimum
+                band_bottom = min_radius
+            
+            if band_top <= band_bottom:
+                logger.error(f"LAYOUT FAILURE: Group {group_id} invalid band: "
+                           f"top={band_top:.1f}px <= bottom={band_bottom:.1f}px. "
+                           f"This should never happen with proper space allocation.")
+                # Skip this group - it will have no layout
+                continue
             
             # Layout events within band
             band_layouts = self._layout_group_band(
@@ -243,10 +423,6 @@ class LayoutEngine:
             
             # Move to next band with gap
             current_radius = band_bottom - self.layout_config.group_gap
-            
-            if current_radius <= min_radius:
-                logger.warning(f"Ran out of space in {event_type} ring after {group_id}")
-                current_radius = min_radius
         
         # Layout single events on shared levels
         single_event_indices = [events[events['group'] == g].index[0] for g in single_groups]
@@ -256,6 +432,17 @@ class LayoutEngine:
             current_radius,
             min_radius
         )
+        
+        # Diagnostic: report what got laid out
+        laid_out_groups = set([b.group_id for b in group_bands])
+        laid_out_singles = set([events.loc[s.event_index, 'group'] for s in single_layouts])
+        all_groups_in_ring = set(group_counts.keys())
+        missing_groups = all_groups_in_ring - laid_out_groups - laid_out_singles
+        
+        logger.info(f"  Groups with bands: {sorted(laid_out_groups)}")
+        logger.info(f"  Groups as singles: {sorted(laid_out_singles)}")
+        if missing_groups:
+            logger.error(f"  MISSING from layout: {sorted(missing_groups)} ← THESE WILL BECOME FALLBACKS!")
         
         return {
             'group_bands': group_bands,
@@ -307,10 +494,8 @@ class LayoutEngine:
         n_events = len(group_indices)
         band_height = band_top - band_bottom
         
-        if band_height <= 0:
-            logger.error(f"Invalid band for group {group_id}: top={band_top}, bottom={band_bottom}")
-            band_height = n_events * 2.0
-            band_bottom = band_top - band_height
+        # Band validation should be done by caller - this should never happen
+        assert band_height > 0, f"Invalid band: top={band_top}, bottom={band_bottom}"
         
         # Calculate spacing - UNIFORM across all groups for consistent visual appearance
         min_spacing = self.layout_config.min_event_spacing
@@ -388,6 +573,15 @@ class LayoutEngine:
         if not single_indices:
             return []
         
+        logger.info(f"  Laying out {len(single_indices)} single events, "
+                   f"start_radius={start_radius:.1f}, min_radius={min_radius:.1f}")
+        
+        if start_radius < min_radius:
+            logger.error(f"  SINGLES LAYOUT FAILURE: start_radius ({start_radius:.1f}) < min_radius ({min_radius:.1f})! "
+                       f"No space left for singles after multi-event bands.")
+            # Can't layout singles - no space
+            return []
+        
         layouts = []
         shared_levels = []
         current_radius = start_radius
@@ -395,26 +589,33 @@ class LayoutEngine:
         
         for idx in single_indices:
             event_deg = events.loc[idx, 'deg1']
+            group_id = events.loc[idx, 'group']
             
             # Try to place on existing level
             placed = False
             for level in shared_levels:
                 # Check angular spacing with other events on this level
                 can_share = all(
-                    self._angular_distance(event_deg, deg) >= 45.0  # 45 degrees min spacing
+                    self._angular_distance(event_deg, deg) >= self.layout_config.single_event_min_angular_spacing
                     for deg in level['degrees']
                 )
                 
-                if can_share and len(level['events']) < 8:  # Max 8 per level
+                if can_share and len(level['events']) < self.layout_config.single_event_max_per_level:
                     level['events'].append(idx)
                     level['degrees'].append(event_deg)
                     events.loc[idx, 'radius'] = level['radius']
                     placed = True
+                    logger.debug(f"    {group_id}: shared level {len(shared_levels)-1} at {level['radius']:.1f}px")
                     break
             
             if not placed:
                 # Create new level
-                new_radius = max(current_radius - gap, min_radius)
+                new_radius = current_radius - gap
+                if new_radius < min_radius:
+                    logger.warning(f"    {group_id}: Cannot create new level - would be below min_radius "
+                                 f"(need {new_radius:.1f}, min is {min_radius:.1f}). SKIPPING!")
+                    continue  # Skip this single event
+                    
                 shared_levels.append({
                     'radius': new_radius,
                     'events': [idx],
@@ -422,6 +623,7 @@ class LayoutEngine:
                 })
                 events.loc[idx, 'radius'] = new_radius
                 current_radius = new_radius
+                logger.debug(f"    {group_id}: new level {len(shared_levels)-1} at {new_radius:.1f}px")
         
         # Create SingleEventLayout objects
         for level_id, level in enumerate(shared_levels):
@@ -433,6 +635,8 @@ class LayoutEngine:
                     shared_level_id=level_id,
                     n_events_on_level=len(level['events'])
                 ))
+        
+        logger.info(f"  Successfully laid out {len(layouts)} of {len(single_indices)} singles on {len(shared_levels)} levels")
         
         return layouts
     
